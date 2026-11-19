@@ -9,9 +9,9 @@ columns, so never point it at Data/manifest.csv -- that would erase every
 enriched column (is_dotnet, verdict, llm_label, cleaned_core, cluster_id, ...).
 
 Usage examples:
-  python Manifest_generator.py --dir Samples/AsyncRAT --family AsyncRAT \
+  python Tools/Manifestor/manifest_generator.py --dir Samples/AsyncRAT --family AsyncRAT \
       --source MalwareBazaar --out manifest_asyncrat.csv
-  python Manifest_generator.py --dir Samples/Regular_executables --family benign \
+  python Tools/Manifestor/manifest_generator.py --dir Samples/Regular_executables --family benign \
       --source Sysinternals --out manifest_benign.csv
 """
 

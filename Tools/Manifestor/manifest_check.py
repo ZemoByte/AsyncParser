@@ -9,11 +9,15 @@ Always-checked invariants:
 
 Columns that do not exist yet in the CSV are skipped, so the same check works
 before and after the schema grows. When present, these are validated:
-  - is_dotnet      yes | no | unknown
-  - verdict        confirmed | malicious_unconfirmed | loader | reject | benign
-  - llm_label      asyncrat | other | benign | uncertain
-  - llm_confidence 0.0 - 1.0
-  - cleaned_core   empty, or a path to an existing file
+  - is_dotnet               yes | no | unknown
+  - upx_detected            yes | no | unknown
+  - avg_section_entropy     0.0 - 8.0
+  - max_section_entropy     0.0 - 8.0
+  - imported_function_count non-negative integer
+  - verdict                 confirmed | malicious_unconfirmed | loader | reject | benign
+  - llm_label               asyncrat | other | benign | uncertain
+  - llm_confidence          0.0 - 1.0
+  - cleaned_core            empty, or a path to an existing file
 
 Usage:
   python Tools/Manifestor/manifest_check.py [--manifest PATH] [--samples PATH]
@@ -31,6 +35,7 @@ BASE = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)
 
 ENUMS = {
     "is_dotnet": {"yes", "no", "unknown"},
+    "upx_detected": {"yes", "no", "unknown"},
     "verdict": {"confirmed", "malicious_unconfirmed", "loader", "reject", "benign"},
     "llm_label": {"asyncrat", "other", "benign", "uncertain"},
 }
@@ -163,7 +168,29 @@ def main():
                 if not os.path.isfile(path):
                     errors.append(f"L{i}: cleaned_core path missing: {value}")
 
-    # 9. Optional, explicitly requested family counts.
+        # 9. PE fingerprint metrics
+        for col in ("avg_section_entropy", "max_section_entropy"):
+            if col in columns:
+                val = (row.get(col) or "").strip()
+                if val:
+                    try:
+                        ent = float(val)
+                        if not 0.0 <= ent <= 8.0:
+                            errors.append(f"L{i}: {col} out of range (0-8): {val}")
+                    except ValueError:
+                        errors.append(f"L{i}: {col} is not a valid float: {val}")
+
+        if "imported_function_count" in columns:
+            val = (row.get("imported_function_count") or "").strip()
+            if val:
+                try:
+                    cnt = int(val)
+                    if cnt < 0:
+                        errors.append(f"L{i}: imported_function_count is negative: {val}")
+                except ValueError:
+                    errors.append(f"L{i}: imported_function_count is not an integer: {val}")
+
+    # 10. Optional, explicitly requested family counts.
     for family, expected in expects.items():
         actual = family_counts.get(family, 0)
         if actual != expected:

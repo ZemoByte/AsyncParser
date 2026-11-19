@@ -1,5 +1,6 @@
 Plan/
 Samples/
+Cleaned/
 Tools/.venv/
 Tools/Extraction/extraction_log.csv
 __pycache__/
