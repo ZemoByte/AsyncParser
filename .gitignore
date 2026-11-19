@@ -1,5 +1,11 @@
 Plan/
 Samples/
-Extraction/.venv/
-Extraction/extraction_log.csv
+Tools/.venv/
+Tools/Extraction/extraction_log.csv
+__pycache__/
 AGENTS.md
+
+*.exe
+*.zip
+*.dll
+*.bin
