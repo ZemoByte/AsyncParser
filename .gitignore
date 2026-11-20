@@ -3,6 +3,7 @@ Samples/
 Cleaned/
 Tools/.venv/
 Tools/Extraction/extraction_log.csv
+Tools/de4dot/
 __pycache__/
 AGENTS.md
 
@@ -10,3 +11,5 @@ AGENTS.md
 *.zip
 *.dll
 *.bin
+*.tmp
+
