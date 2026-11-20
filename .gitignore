@@ -3,9 +3,14 @@ Samples/
 Cleaned/
 Tools/.venv/
 Tools/Extraction/extraction_log.csv
+Tools/Extraction/sort_log.csv
+Tools/Extraction/mb_download_log.csv
 Tools/de4dot/
 __pycache__/
 AGENTS.md
+.vscode
+
+.env
 
 *.exe
 *.zip

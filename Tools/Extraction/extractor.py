@@ -5,10 +5,14 @@ Categories (MalwareBazaar zips use password "infected"):
   1) AsyncRAT      -> exes to Samples/AsyncRAT,     leftover zips to Samples/AsyncRAT_Zip_Files
   2) Other Malware -> exes to Samples/Other_Malwares, leftover zips to Samples/Other_Malwares_Zip_Files
   3) Regular executables (plain .exe, no zip) -> moved to Samples/Regular_executables
+
+Also appends 15-column manifest rows to Data/manifest.csv for each moved file,
+so the dataset stays consistent with the manifest schema.
 """
 
 import argparse
 import csv
+import hashlib
 import os
 import shutil
 import pyzipper
@@ -29,6 +33,107 @@ CATEGORIES = {
     "2": ("Other Malware", OTHER_DIR, OTHER_ZIP_DIR, True),
     "3": ("Regular executables", REGULAR_DIR, None, False),
 }
+
+
+def sha256_of_file(path):
+    """Compute SHA256 of a file, matching manifest_check.py style."""
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def append_manifest_row(path, family, source="MalwareBazaar"):
+    """Append a 15-column manifest row for a moved file.
+
+    The row is deduped against existing sha256s in Data/manifest.csv.
+    Uses the --append pattern from manifest_generator.py so it is safe to
+    point at Data/manifest.csv.
+
+    Fields filled from basket extraction:
+      - sha256: hash of the moved file
+      - filename: the file's basename
+      - family: the category name (AsyncRAT / Other_Malware / benign)
+      - source: "MalwareBazaar"
+      - bazaar_signature: "" (unknown at extract time)
+      - bazaar_tags: "" (unknown at extract time)
+      - os: "Windows"
+      - arch: "unknown"
+      - filetype: "exe (PE)"
+      - is_dotnet: "unknown" (filled later by manifest_updater.py)
+      - upx_detected: "unknown"
+      - avg_section_entropy: ""
+      - max_section_entropy: ""
+      - imported_function_count: ""
+      - notes: e.g. "basket-extracted"
+    """
+    import sys
+    sys.path.insert(0, os.path.join(BASE, "Tools", "Manifestor"))
+    from manifest_generator import load_manifest, sha256_of_file as mg_sha256
+
+    # Actually, use our own sha256 function
+    sha = sha256_of_file(path)
+
+    # Load existing manifest and dedupe
+    MANIFEST_PATH = os.path.join(BASE, "Data", "manifest.csv")
+    existing_shas = set()
+    if os.path.isfile(MANIFEST_PATH):
+        with open(MANIFEST_PATH, newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                s = (row.get("sha256") or "").strip().lower()
+                if s:
+                    existing_shas.add(s)
+
+    if sha.lower() in existing_shas:
+        return  # already in manifest
+
+    filename = os.path.basename(path)
+    row = {
+        "sha256": sha,
+        "filename": filename,
+        "family": family,
+        "source": source,
+        "bazaar_signature": "",
+        "bazaar_tags": "",
+        "os": "Windows",
+        "arch": "unknown",
+        "filetype": "exe (PE)",
+        "is_dotnet": "unknown",
+        "upx_detected": "unknown",
+        "avg_section_entropy": "",
+        "max_section_entropy": "",
+        "imported_function_count": "",
+        "notes": "basket-extracted",
+    }
+
+    # Read existing manifest
+    existing_rows = []
+    if os.path.isfile(MANIFEST_PATH):
+        with open(MANIFEST_PATH, newline="") as f:
+            reader = csv.DictReader(f)
+            for row in reader:
+                existing_rows.append(row)
+
+    # Append new row
+    existing_rows.append(row)
+
+    # Write back using the 15-column schema from manifest_generator.py
+    HEADER_COLUMNS = [
+        "sha256", "filename", "family", "source", "bazaar_signature",
+        "bazaar_tags", "os", "arch", "filetype", "is_dotnet",
+        "upx_detected", "avg_section_entropy", "max_section_entropy",
+        "imported_function_count", "notes",
+    ]
+
+    tmp = MANIFEST_PATH + ".tmp"
+    with open(tmp, "w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=HEADER_COLUMNS)
+        writer.writeheader()
+        writer.writerows(existing_rows)
+
+    os.replace(tmp, MANIFEST_PATH)
 
 
 def ask_category():
@@ -71,6 +176,7 @@ def organize_extracted(dest_dir, extracted_files, stem):
         if parent != dest_dir and os.path.isdir(parent) and not os.listdir(parent):
             os.rmdir(parent)
 
+
 def process_malware(category_name, dest_dir, zip_dest_dir):
     os.makedirs(dest_dir, exist_ok=True)
     os.makedirs(zip_dest_dir, exist_ok=True)
@@ -102,6 +208,12 @@ def process_malware(category_name, dest_dir, zip_dest_dir):
             if len(extracted_files) > 1:
                 detail += f" -> folder '{stem}/'"
             print(f"  OK  {zip_name}: {detail}")
+
+            # Append manifest row for each extracted file
+            for extracted_file in extracted_files:
+                if os.path.isfile(extracted_file):
+                    append_manifest_row(extracted_file, category_name)
+
             log.append((zip_name, "ok", detail, ""))
 
         except RuntimeError as e:
@@ -139,6 +251,10 @@ def process_regular():
             continue
         shutil.move(src, dst)
         print(f"  OK  {exe_name}")
+
+        # Append manifest row for each moved exe
+        append_manifest_row(dst, "benign")
+
         moved += 1
 
     print(f"\nSummary: {moved} exe(s) moved to {REGULAR_DIR}")

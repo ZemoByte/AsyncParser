@@ -199,3 +199,4 @@ d3247f03dcd7b9335344ebba76a0b92370f32f1cb0e480c734da52db2bd8df60,pslist64.exe,be
 dcdb9bd39b6014434190a9949dedf633726fdb470e95cc47cdaa47c1964b969f,psloglist.exe,benign,Sysinternals,,,Windows,unknown,exe (PE),no,no,5.02,6.65,134,benign (Microsoft Sysinternals); do not execute in analysis env
 5e55b4caf47a248a10abd009617684e969dbe5c448d087ee8178262aaab68636,psloglist64.exe,benign,Sysinternals,,,Windows,unknown,exe (PE),no,no,4.51,6.52,143,benign (Microsoft Sysinternals); do not execute in analysis env
 6ed5d50cf9d07db73eaa92c5405f6b1bf670028c602c605dfa7d4fcb80ef0801,pspasswd.exe,benign,Sysinternals,,,Windows,unknown,exe (PE),no,no,4.98,6.65,103,benign (Microsoft Sysinternals); do not execute in analysis env
+572db981cf481bb08238911632bd1c570bb8195ac73b30e7771821802ace8e7e,572db981cf481bb08238911632bd1c570bb8195ac73b30e7771821802ace8e7e.exe,QuasarRAT,MalwareBazaar,QuasarRAT,,Windows,unknown,exe (PE),yes,no,3.61,6.08,1,signature=QuasarRAT
