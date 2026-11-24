@@ -64,10 +64,10 @@ Stress-test plans and designs through systematic questioning:
 - Conduct deep-dive questioning across all aspects of a plan, walking decision trees branch-by-branch until shared understanding is reached.
 - Automatically explore the codebase to answer questions where code context is available.
 - Designed for design reviews, architecture validation, and pre-implementation planning.
-- Ask the questions in small batches (at most 3 at a time), each with your recommended default, so the user can answer "yes" to move on. See `User.md`.
+- Ask the questions in small batches (at most 3 at a time), each with your recommended default, so the user can answer "yes" to move on. See `Docs/User.md`.
 
 ### 7. No Commits Until Told
-No commit to Engram memory or git (remote/local) until explicitly told. The user commits. Engram commit only on explicit authorization.
+No commit to Engram memory or git (remote/local) until explicitly told. The user commits. Only Engram commit only on explicit authorization.
 
 No git commit/push by the assistant; the user commits.
 
@@ -85,7 +85,7 @@ This is a university project: a **static detector for AsyncRAT .NET client paylo
 - Splits are by **cluster** (TLSH distance + shared config keys) or by **date**, never random.
 - Feature vocabularies and frequency filters are fitted on the **training split only**, and count **clusters**, not files.
 - Labels: never trust MalwareBazaar tags alone. Verify with `rat_king_parser` (labeling time only, never a model feature).
-- Reference archives (builder, server, stub, plugins) are reference material, never training data.
+- Reference archives - VXunderground (builder, server, stub, plugins) are reference material, never training data.
 
 ### 9. Safety (strict)
 - NEVER execute, load, import, or build any malware sample or any builder, server or stub component. Static parsing only.
@@ -93,20 +93,19 @@ This is a university project: a **static detector for AsyncRAT .NET client paylo
 - No downloading samples. No network except package registries.
 - Assume everything runs in an isolated VM with no network and no shared folders. If a step needs to run something from a sample, stop and ask.
 - Do not delete user data or samples. Move rejects to a quarantine folder. Ask before deleting anything.
-- Do not commit binaries (`*.exe`, `*.dll`, `*.zip`, `*.7z`, `*.p12`) or anything under `Samples/` or `Reference/`.
+- Do not commit binaries (`*.exe`, `*.dll`, `*.zip`, `*.7z`, `*.p12`).
 
 ### 10. Working rules
 - Read the relevant files before editing. Confirm a bug is real before fixing it.
 - Match samples by sha256, never by filename.
-- Use one class vocabulary everywhere (`Tools/common/families.py`). Reject unknown values.
+- Use one class vocabulary everywhere. Reject unknown values.
 - Report exact error text. No `except: pass` that hides failures.
 - Tests use synthetic files (tiny fake zips, hand-made CSVs), never real malware.
 - Never guess a file name, function name, library API or CLI flag. Run `--help`, read the code or read the docs.
 - Never claim something works unless you ran it or a test proved it. Say "not tested" when it is not.
-- Python 3.10+. Keep the layout: `Tools/Extraction`, `Tools/Manifestor`, `Tools/Static/DotNet`, `Tools/Static/PE`, `Tools/Verify`, `Tools/Reference`, `Tools/ML`.
+- Python 3.10+.
 - End every task with: what changed, what you ran, what passed, what is not tested.
 
 ### 11. Where things live
-- `Plan.md` — decisions, architecture, build order, repo fix list.
-- `User.md` — how to talk to the user, glossary.
-- `Data/` — manifests, features, splits, results (never commit samples).
+- `Docs/User.md` — decisions, architecture, build order, repo fix list.
+- `Docs/Plan.md` — how to talk to the user, glossary.
