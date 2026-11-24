@@ -1,4 +1,7 @@
 .env
-AGENTS.md
-
-/Docs
+*.exe
+*.dll
+*.zip
+*.7z
+*.p12
+*.pdb
