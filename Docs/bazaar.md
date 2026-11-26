@@ -6,7 +6,7 @@ This document is an **implementation brief** for OpenCode. It translates a compl
 
 - Build a Python automation script that downloads malware samples from the MalwareBazaar Community API.
 - Purpose: build an **academic training dataset**. Intended to run in an isolated Linux VM for defensive research.
-- The script is **interactive**, loops continuously, and is normally run **1–2 hours/day** until the user stops it with **Ctrl+C**.
+- The script is **interactive** and does **one tag query per run**: it downloads the available candidates, then stops with a summary. It is normally run **1–2 hours/day**; Ctrl+C can stop it earlier.
 - Deliverable: one small Python script. No framework. No features beyond this brief.
 
 ## 2. Verified API facts (from https://bazaar.abuse.ch/api/ and /faq/)
@@ -28,7 +28,7 @@ This document is an **implementation brief** for OpenCode. It translates a compl
 
 ## 4. Authentication
 
-- Read `.env` in the script's directory. Variable name: `MALWAREBAZAAR_AUTH_KEY`.
+- Read `.env` in the script's directory (or the project root). Variable name: `MB_AUTH_KEY`.
 - Parse `.env` with the **standard library only** — do not use `python-dotenv`.
 - If `.env` is missing: print a clear error and exit; **do not create it** (the deliberate exception to the create-if-missing rule).
 - Send the value as the `Auth-Key` header on every API request.
@@ -50,7 +50,7 @@ Options 1 and 2 continue through a short wizard:
   - **Yes (advanced):** allow **multiple malware tags, but still one file-type tag**. Samples must contain the searched tag and the selected file type; extra malware tags are allowed.
   - If several file types were entered, process them one at a time so each sample still has exactly one file-type tag.
 - Prompt for the download rate; default **10 downloads/minute**, adjustable.
-- **No sample-count prompt.** The process loops polls until Ctrl+C.
+- **No sample-count prompt.** The run ends automatically after one pass; Ctrl+C stops it earlier.
 
 ## 6. Output layout
 
@@ -65,7 +65,7 @@ AsyncParser/
 └── Tools/
     └── MBDownloader/
         ├── <downloader script>
-        ├── samples.db          # MAIN DB: whole sample dataset + dedup + cursors (persistent)
+        ├── samples.db          # MAIN DB: whole sample dataset + dedup (persistent)
         └── temp/
             ├── <in-progress downloads>
             └── comparison.db   # TEMP DB: per-poll cache + run log (deleted at stop)
@@ -82,8 +82,6 @@ Saved sample name: `<sha256_hash>.<ext>`, where the extension comes from the API
 **Main DB — `AsyncParser/Tools/MBDownloader/samples.db` (persistent, holds all sample data):**
 
 - `downloads` — the whole sample dataset / dedup index: `sha256_hash` as PRIMARY KEY, API `file_name` (metadata only), local filename, tag, file type, `first_seen`, download timestamp, status.
-- `cursors` — per-tag history: tag as PRIMARY KEY, `last_first_seen` (UTC), `last_sha256` (tie-breaker).
-
 **Temporary comparison DB — `AsyncParser/Tools/MBDownloader/temp/comparison.db` (ephemeral):**
 
 - `session_log` — run log: hash, tag, file type, timestamp, status, error text.
@@ -93,17 +91,16 @@ Created at startup. During the run, incoming sample metadata is written into its
 
 ## 8. Search and history logic
 
-Poll interval: re-query the selected tag **every 1 minute**. Cycles run sequentially — never start a new cycle while the previous one is still downloading.
+One tag query per run; there is no polling loop.
 
-Per poll cycle:
+Per run:
 
-1. Call `get_taginfo` with the selected tag and `limit=1000`.
-2. Store the returned metadata in the per-poll cache in the temporary comparison DB; filter client-side there: file type first, then the tag-count rule from the wizard (exact-two or allow-extra).
-3. Using the temporary comparison DB, compare each cached hash against the main DB's persistent `downloads` index. Skip (ignore) every hash already present — duplicate samples are not downloaded again.
-4. Split results using the per-tag cursor in the main DB: **new** = `first_seen` > cursor; **backlog** = `first_seen` <= cursor but not yet downloaded. Download **new first**, then resume the **backlog**. Break `first_seen` ties by `sha256_hash` so ordering is deterministic. The cursor tracks **upload time (`first_seen`)** as originally agreed; `last_seen` ordering only determines which samples appear in the 1,000-result window.
-5. For each chosen sample: call `get_file`, write the ZIP to the temp folder, extract with `pyzipper` (password `infected`), verify integrity, then atomically move the extracted sample into the destination folder and insert its row into `downloads` in the main DB; append the outcome to `session_log` in the temporary comparison DB.
-6. Advance the cursor in the main DB only after successful, verified writes.
-7. Only the newest 1,000 samples per tag are reachable through the tag API; this limitation is accepted.
+1. Call `get_taginfo` **once** with the selected tag and `limit=1000`, then filter the cached metadata for each selected file type.
+2. Store the returned metadata in the per-poll cache in the temporary comparison DB; filter client-side there: file type first, then the tag rule from the wizard.
+3. Using the temporary comparison DB, compare each cached hash against the main DB's persistent `downloads` index. Skip (ignore) every hash already present with status `success` or `adopted` — duplicate samples are not downloaded again.
+4. Derive the progress marker from the latest `first_seen` and hash for the same `tag_rule` in `downloads`: **new** = greater than that marker; **backlog** = the rest. Download **new first**, then the **backlog**, breaking ties by `sha256_hash`. No `cursors` table is used.
+5. For each chosen sample: if the destination file already exists, adopt it (status `adopted`) when its SHA256 matches its filename, otherwise move it to `Samples/_quarantine` and log the reason; neither case calls the API nor counts as an error. Otherwise record an attempt, call `get_file`, write the ZIP to the temp folder, extract with `pyzipper` (password `infected`), verify integrity, atomically move the sample into the destination folder and insert its success row into `downloads`; append the outcome to `session_log` in the temporary comparison DB.
+6. Only the newest 1,000 samples per tag are reachable through the tag API; this limitation is accepted.
 
 ## 9. Integrity and file handling
 
@@ -117,7 +114,7 @@ Five values must match: **API `sha256_hash` == downloaded ZIP's filename == name
 ## 10. Rate limiting, failures, shutdown
 
 - Default **10 downloads/minute**, adjustable at startup; sleep between downloads.
-- Local daily cap: **1,200 downloads** (proposed safety margin under the API's documented 2,000/IP/day limit — see §13). Reset on a **rolling 24-hour window**, falling back to UTC midnight if that proves impractical.
+- Local daily cap: **1,200 get_file attempts** (successful or failed — the API docs do not say whether failed calls count, so the local cap is conservative). Reset on a **rolling 24-hour window**, falling back to UTC midnight if that proves impractical.
 - HTTP 429: honor `Retry-After`, apply exponential backoff, and stop if the throttling repeats (see §13).
 - Stop the run when **more than 10** errors/corrupt downloads have occurred (i.e. on the 11th).
 - Bounded retries: **5 attempts with backoff** for network errors before counting an error.
@@ -127,14 +124,14 @@ Five values must match: **API `sha256_hash` == downloaded ZIP's filename == name
 
 - No text log file: the run log lives in a **separate temporary comparison DB** under `temp/`, never in the main sample DB. It is created at startup, grows while incoming samples are compared against the samples already on the system and downloaded, and the whole temp DB is deleted at the end of the work, however the run ends. A new run starts with a fresh comparison DB.
 - Fields to record: hash, tag, file type, timestamp, status, error text.
-- The main DB's persistent `downloads` table — not the run log — is the dedup authority: it is compared against incoming samples on every poll and survives across runs.
+- The main DB's persistent `downloads` table — not the run log — is the dedup authority: it is compared against incoming samples on every run and survives across runs.
 - Console: a brief progress line per sample. Never log the auth key.
 - No dry-run mode.
 
 ## 12. Dependencies
 
 - Python 3 standard library for HTTP, `.env` parsing, SQLite, and hashing. Use `urllib.request` for HTTP calls (assumption — see §13).
-- `pyzipper` for AES ZIP extraction (install with `pip install pyzipper`).
+- `pyzipper` for AES ZIP extraction. From the project root: `python3 -m pip install -r Tools/requirements.txt`.
 - No other third-party packages.
 
 ## 13. Remaining assumptions and pending input
@@ -147,7 +144,7 @@ Chosen defaults, not explicitly confirmed by the user:
 - Extension mapping for types other than `exe` (e.g. `dll`, `ps1`, `bat`, `js`) follows the API's `file_type` lowercased; unusual or missing values should be logged and skipped.
 - Exact boundary of "similar Windows executable/script formats": beyond `exe`, `dll`, `ps1`, `bat`, `js`, it is not defined whether `vbs`, `hta`, `scr`, `msi`, `cmd`, `lnk`, etc. are included. Documents and Linux files are definitely excluded.
 
-Confirmed in follow-up (no longer open): case-insensitive file types; five-way name/hash check; `last_seen` latest-first ordering; 1-minute poll interval; 5 retries; `AsyncRAT` tag exists; tag rule (default one malware tag + one file-type tag; advanced multiple malware tags + one file-type tag).
+Confirmed in follow-up (no longer open): case-insensitive file types; five-way name/hash check; `last_seen` latest-first ordering; one query per run; 5 retries; `AsyncRAT` tag exists; tag rule (default one malware tag + one file-type tag; advanced multiple malware tags + one file-type tag).
 
 Pending from the user: the external site for **Benign** samples. Option 3 stays a placeholder until that source is supplied.
 

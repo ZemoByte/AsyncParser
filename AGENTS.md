@@ -92,7 +92,7 @@ This is a university project: a **static detector for AsyncRAT .NET client paylo
 - NEVER generate or compile new AsyncRAT clients.
 - Assume everything runs in an isolated VM with no network and no shared folders. If a step needs to run something from a sample, stop and ask.
 - Do not delete user data or samples. Move rejects to a quarantine folder. Ask before deleting anything.
-- Do not commit binaries (`*.exe`, `*.dll`, `*.zip`, `*.7z`, `*.p12`).
+- Do not commit binaries (`*.exe`, `*.dll`, `*.zip`, `*.7z`, `*.p12`) or anything under `Samples/`.
 
 ### 10. Working rules
 - Read the relevant files before editing. Confirm a bug is real before fixing it.

@@ -1,0 +1,1 @@
+{"fields": {"config": null, "is_dotnet": false, "lbl_sts": "rejected_non_dotnet", "obf_lvl": "unknown", "parser_version": "", "sha256": "ef1054b5634c3bdad2b6eb449a9994da5d870bc81009d20368e798d6df38cf35", "sug_fam": ""}, "kind": "label", "producer": "labeler", "schema_version": 1, "sha256": "ef1054b5634c3bdad2b6eb449a9994da5d870bc81009d20368e798d6df38cf35"}

@@ -1,0 +1,5 @@
+pyzipper
+rat-king-parser==4.2.4
+dnfile==0.18.0
+pefile==2024.8.26
+tlsh

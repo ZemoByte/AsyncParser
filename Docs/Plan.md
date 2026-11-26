@@ -110,12 +110,35 @@ Report the **abstain rate per class** next to accuracy (e.g. "abstained on 40% o
 - Write `Docs/limitations.md`: native/droppers/loaders out of scope; runtime-decrypted payloads and encrypted reflection hide references; padding with benign-looking references can evade a presence-based model.
 
 ## 11. Build order (each step has a check)
-1. Define the manifest schema and label vocabulary → check: manifest validates, no unknown families.
-2. Add `rat_king_parser` verification → check: verified/unverified counts printed, placeholders rejected.
-3. Collect benign .NET and other-RAT negatives; build clusters and splits → check: no cluster spans splits; cluster counts reported.
-4. Layer A extractor + vocabulary (training only, ≥3 clusters) → check: `Docs/vocab.json` reproducible.
-5. LightGBM + TLSH kNN + trivial baseline → check: `Docs/results.md` with confusion matrices and per-class coverage.
-6. Abstention gate with data-calibrated thresholds → check: abstain rates reported.
-7. Ablations for Layer B and extra signals, hand-check ~20 samples in dnSpyEx → check: ablation table.
-8. Stage 2 family step and explainer templates.
-9. Only then: neural encoder or language-model explainer.
+1. **[PARTIAL]** Use `Tools/MBDownloader/samples.db` as the append-only download ledger (SHA256 index, tag rule, file type, Bazaar metadata) and define the label vocabulary → check: DB validates, no unknown families. Ledger and downloader are done; label vocabulary and the separate dataset database are not started.
+2. **[NOT STARTED]** Add `rat_king_parser` verification → check: verified/unverified counts printed, placeholders rejected.
+3. **[NOT STARTED]** Collect benign .NET and other-RAT negatives; build clusters and splits → check: no cluster spans splits; cluster counts reported.
+4. **[NOT STARTED]** Layer A extractor + vocabulary (training only, ≥3 clusters) → check: `Docs/vocab.json` reproducible.
+5. **[NOT STARTED]** LightGBM + TLSH kNN + trivial baseline → check: `Docs/results.md` with confusion matrices and per-class coverage.
+6. **[NOT STARTED]** Abstention gate with data-calibrated thresholds → check: abstain rates reported.
+7. **[NOT STARTED]** Ablations for Layer B and extra signals, hand-check ~20 samples in dnSpyEx → check: ablation table.
+8. **[NOT STARTED]** Stage 2 family step and explainer templates.
+9. **[NOT STARTED]** Only then: neural encoder or language-model explainer.
+
+## 12. Current state (2026-11-26)
+
+**Done — downloader and data intake (synthetic-tested, no live API run after the final changes):**
+- `Tools/MBDownloader/mb_downloader.py`: interactive menu, file-type validation, primary/secondary/Surprise Me tag rule, one `get_taginfo` query per run, new-first then backlog ordering, SHA256 dedup, rate limiting, 5 retries, 429 backoff, Ctrl+C stop, clean summary, temp DB cleanup, console progress lines.
+- File handling: atomic move, five-way SHA256/name check, adoption of already-present verified files, quarantine of mismatching files, no deletion of files the current attempt did not create.
+- `downloads` ledger: tag rule, file type, full Bazaar tag list, `signature`, `file_size`, `last_seen`, attempt tracking; local cap counts every `get_file` attempt over a rolling 24 h window; `samples.db` is intentionally tracked in git.
+- `Tools/requirements.txt` (`pyzipper`), `.gitignore` excludes `Samples/` and downloaded sample extensions, `AGENTS.md` §9 forbids committing `Samples/`.
+
+**Done — Phase 0 labeling/import (synthetic-tested; importer run on real generated data):**
+- `Tools/Labeling/labeler.py`: reads the ledger by SHA-256, checks the PE CLR header, batches `rat_king_parser -n`, writes label JSON and `.labeler.done`; benign hand-made EXEs are labeled as `unverified` with `sug_fam=Benign`.
+- `Tools/_carver_common.py` plus `ImportTable`, `TypeRef`, `MemberRef`, `AssemblyRef`, `ImplMap`: one carver per folder, each writes `Data/<Class>/<Tool>/<sha256>.json` plus `.done`.
+- `Tools/Importer/importer.py`: creates `Data/DataSet.db` and class DBs, auto-`ALTER`s columns, imports labels and carved JSONs, enforces markers and schema version, deletes markers after success, and places rows by label.
+- Synthetic tests: `/tmp/opencode/test_labeler.py`, `/tmp/opencode/test_importer.py`. End-to-end importer run produced 180 dataset rows, 48 `AsyncRAT.db` rows, 15 `OtherMalwares.db` rows, and 10 `Benign.db` rows.
+
+**Not done yet:**
+- Obfuscator fingerprint detection (repos cloned under `Tools/ObfuscatorRepos/`, currently `obf_lvl` stays `unknown`).
+- Reference archive contents inspection and mapping; confirm CAPE extractor can run standalone.
+- Layer A extractor and `Docs/vocab.json`; LightGBM, TLSH kNN and trivial baseline; `Docs/results.md`.
+- Clusters and temporal splits; `cluster_id` is not populated yet.
+- Abstention thresholds, ablations, ~20-sample dnSpyEx human check, Stage 2 explainer templates, `Docs/limitations.md`.
+- Neural encoder / language-model explainer (stretch only).
+- Live verification after the final code changes: real API run, 429 path, daily cap, error limit, Ctrl+C during a download.

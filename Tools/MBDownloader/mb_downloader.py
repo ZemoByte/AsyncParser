@@ -265,6 +265,10 @@ def prompt_rate() -> int:
 
 # ----------------------------------------------------------------- database
 
+def text_field(value) -> str:
+    return "" if value is None else str(value)
+
+
 def ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
     columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
     if column not in columns:
@@ -286,12 +290,19 @@ def init_main_db(conn: sqlite3.Connection) -> None:
         first_seen TEXT,
         downloaded_at TEXT,
         downloaded_epoch REAL,
+        attempted_epoch REAL,
+        signature TEXT,
+        file_size TEXT,
+        last_seen TEXT,
         status TEXT
     )""")
     ensure_column(conn, "downloads", "secondary_tag", "TEXT")
     ensure_column(conn, "downloads", "wildcard_extra", "INTEGER")
     ensure_column(conn, "downloads", "api_tags", "TEXT")
     ensure_column(conn, "downloads", "tag_rule", "TEXT")
+    for column in ("attempted_epoch", "signature", "file_size", "last_seen"):
+        definition = "REAL" if column == "attempted_epoch" else "TEXT"
+        ensure_column(conn, "downloads", column, definition)
     conn.commit()
 
 
@@ -313,12 +324,17 @@ def init_temp_db(conn: sqlite3.Connection) -> None:
         sha256_hash TEXT PRIMARY KEY,
         tag TEXT,
         file_type TEXT,
-        first_seen TEXT
+        first_seen TEXT,
+        signature TEXT,
+        file_size TEXT,
+        last_seen TEXT
     )""")
     ensure_column(conn, "session_log", "secondary_tag", "TEXT")
     ensure_column(conn, "session_log", "wildcard_extra", "INTEGER")
     ensure_column(conn, "session_log", "api_tags", "TEXT")
     ensure_column(conn, "session_log", "tag_rule", "TEXT")
+    for column in ("signature", "file_size", "last_seen"):
+        ensure_column(conn, "poll_cache", column, "TEXT")
     conn.commit()
 
 
@@ -352,10 +368,86 @@ def normalize_first_seen(value) -> str:
     return str(value or "").strip().replace("T", " ")
 
 
-def downloads_in_last_24h(conn: sqlite3.Connection) -> int:
+def attempts_in_last_24h(conn: sqlite3.Connection) -> int:
     cutoff = time.time() - 86400
-    return conn.execute("SELECT COUNT(*) FROM downloads WHERE downloaded_epoch >= ?",
-                        (cutoff,)).fetchone()[0]
+    return conn.execute(
+        "SELECT COUNT(*) FROM downloads "
+        "WHERE COALESCE(attempted_epoch, downloaded_epoch) >= ?", (cutoff,)
+    ).fetchone()[0]
+
+
+def upsert_download(conn: sqlite3.Connection, values: dict) -> None:
+    columns = list(values)
+    placeholders = ",".join("?" for _ in columns)
+    conn.execute(f"INSERT OR REPLACE INTO downloads ({','.join(columns)}) "
+                 f"VALUES ({placeholders})", [values[column] for column in columns])
+    conn.commit()
+
+
+def record_attempt(conn: sqlite3.Connection, sha256_hash: str, tag: str,
+                   secondary_tag: str, wildcard_extra: bool, rule: str,
+                   file_type: str, first_seen: str, item: dict) -> None:
+    upsert_download(conn, {
+        "sha256_hash": sha256_hash,
+        "api_file_name": text_field(item.get("file_name")),
+        "tag": tag,
+        "secondary_tag": secondary_tag,
+        "wildcard_extra": int(wildcard_extra),
+        "api_tags": tags_to_csv(item.get("tags")),
+        "tag_rule": rule,
+        "file_type": file_type,
+        "first_seen": first_seen,
+        "attempted_epoch": time.time(),
+        "status": "attempted",
+    })
+
+
+def handle_existing_file(main_conn: sqlite3.Connection, temp_conn: sqlite3.Connection,
+                         sha256_hash: str, file_type: str, dest_dir: Path, tag: str,
+                         secondary_tag: str, wildcard_extra: bool, rule: str,
+                         first_seen: str, item: dict) -> str | None:
+    final_path = dest_dir / f"{sha256_hash}.{EXT_BY_TYPE[file_type]}"
+    if not final_path.is_file():
+        return None
+    digest = hashlib.sha256()
+    with final_path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1 << 20), b""):
+            digest.update(chunk)
+    if digest.hexdigest() == sha256_hash:
+        upsert_download(main_conn, {
+            "sha256_hash": sha256_hash,
+            "api_file_name": text_field(item.get("file_name")),
+            "local_filename": final_path.name,
+            "tag": tag,
+            "secondary_tag": secondary_tag,
+            "wildcard_extra": int(wildcard_extra),
+            "api_tags": tags_to_csv(item.get("tags")),
+            "tag_rule": rule,
+            "file_type": file_type,
+            "first_seen": first_seen,
+            "downloaded_at": utc_now(),
+            "signature": text_field(item.get("signature")),
+            "file_size": text_field(item.get("file_size")),
+            "last_seen": normalize_first_seen(item.get("last_seen")),
+            "status": "adopted",
+        })
+        log_session(temp_conn, sha256_hash, tag, file_type, "adopted",
+                    secondary_tag=secondary_tag, wildcard_extra=wildcard_extra,
+                    api_tags=tags_to_csv(item.get("tags")), tag_rule=rule)
+        console("ADOPT", f"{final_path.name}: hash matches, no API call")
+        return "adopted"
+
+    quarantine_dir = ensure_dir(SAMPLES_DIR / "_quarantine")
+    target = quarantine_dir / final_path.name
+    if target.exists():
+        target = quarantine_dir / f"{final_path.stem}.{int(time.time())}.{EXT_BY_TYPE[file_type]}"
+    os.replace(final_path, target)
+    log_session(temp_conn, sha256_hash, tag, file_type, "quarantined",
+                "existing file hash does not match its name",
+                secondary_tag=secondary_tag, wildcard_extra=wildcard_extra,
+                api_tags=tags_to_csv(item.get("tags")), tag_rule=rule)
+    console("QUARANTINE", f"{final_path.name} -> {target}")
+    return "quarantined"
 
 
 # ------------------------------------------------------------------ filtering
@@ -417,12 +509,24 @@ def build_candidates(temp_conn: sqlite3.Connection, main_conn: sqlite3.Connectio
             skipped.append((sha, str(api_type or "missing")))
             continue
         filtered.append((sha, normalize_first_seen(first_seen)))
-    known = {row[0] for row in main_conn.execute("SELECT sha256_hash FROM downloads")}
+    known = {row[0] for row in main_conn.execute(
+        "SELECT sha256_hash FROM downloads WHERE status IN ('success', 'adopted')")}
     duplicates = sum(1 for item in filtered if item[0] in known)
     fresh = [item for item in filtered if item[0] not in known]
 
-    fresh.sort(key=lambda item: (item[1], item[0]))
-    return {"candidates": fresh, "skipped": skipped,
+    cursor = main_conn.execute(
+        "SELECT first_seen, sha256_hash FROM downloads "
+        "WHERE tag_rule = ? AND status IN ('success', 'adopted') "
+        "ORDER BY first_seen DESC, sha256_hash DESC LIMIT 1",
+        (composite_tag(tag, secondary_tag, wildcard_extra),)
+    ).fetchone()
+    cursor_key = (normalize_first_seen(cursor[0]), cursor[1] or "") if cursor else ("", "")
+
+    new = [item for item in fresh if (item[1], item[0]) > cursor_key]
+    backlog = [item for item in fresh if (item[1], item[0]) <= cursor_key]
+    for group in (new, backlog):
+        group.sort(key=lambda item: (item[1], item[0]))
+    return {"new": new, "backlog": backlog, "skipped": skipped,
             "rows": len(rows), "rejected": rejected, "duplicates": duplicates}
 
 
@@ -436,8 +540,6 @@ def download_sample(auth_key: str, sha256: str, file_type: str, dest_dir: Path,
     zip_path = TEMP_DIR / f"{sha256}.zip"
     part_path = TEMP_DIR / f"{sha256}.{ext}.part"
     final_path = dest_dir / f"{sha256}.{ext}"
-    if final_path.exists():
-        raise ApiError("destination file already exists")
 
     try:
         body = get_file(auth_key, sha256, state)
@@ -461,6 +563,8 @@ def download_sample(auth_key: str, sha256: str, file_type: str, dest_dir: Path,
 
         with open(part_path, "wb") as handle:
             handle.write(payload)
+        if final_path.exists():
+            raise ApiError("destination file appeared during download")
         os.replace(part_path, final_path)
         return final_path.name
     except Exception:
@@ -503,61 +607,79 @@ def run_poll_loop(auth_key: str, tag: str, dest_dir: Path, file_types: list,
     started_at = time.monotonic()
     last_download = None
 
+    session_adopted = 0
+    session_quarantined = 0
+
     try:
         while True:
             if STOP["requested"]:
                 raise StopRun("Ctrl+C")
 
+            console("QUERY", f"tag={tag}")
+            query_start = time.monotonic()
+            try:
+                metadata = get_taginfo(auth_key, tag, state)
+            except StopRun:
+                raise
+            except ApiError as exc:
+                console("ERROR", f"tag query failed: {exc}")
+                errors += 1
+                if errors > MAX_ERRORS:
+                    raise StopRun("error limit reached")
+                raise StopRun("tag query failed; ending run")
+            console("RESULT", f"{len(metadata)} rows in {time.monotonic()-query_start:.1f}s")
+
+            # last_seen ordering (user-confirmed) decides which TAG_LIMIT samples
+            # are visible in this window; first_seen orders the download queue below.
+            metadata_by_sha = {}
+            temp_conn.execute("DELETE FROM poll_cache")
+            for item in metadata:
+                sha = str(item.get("sha256_hash") or "")
+                if not sha:
+                    continue
+                metadata_by_sha[sha] = item
+                temp_conn.execute(
+                    "INSERT OR REPLACE INTO poll_cache "
+                    "(sha256_hash, tag, file_type, first_seen, signature, file_size, last_seen) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (sha, tags_to_csv(item.get("tags")), text_field(item.get("file_type")),
+                     normalize_first_seen(item.get("first_seen")),
+                     text_field(item.get("signature")), text_field(item.get("file_size")),
+                     normalize_first_seen(item.get("last_seen"))),
+                )
+            temp_conn.commit()
+
             for file_type in file_types:
                 if STOP["requested"]:
                     raise StopRun("Ctrl+C")
-                console("QUERY", f"tag={tag} type={file_type}")
-                query_start = time.monotonic()
-                try:
-                    metadata = get_taginfo(auth_key, tag, state)
-                except StopRun:
-                    raise
-                except ApiError as exc:
-                    console("ERROR", f"tag query failed: {exc}")
-                    errors += 1
-                    if errors > MAX_ERRORS:
-                        raise StopRun("error limit reached")
-                    continue
-                console("RESULT", f"{len(metadata)} rows in {time.monotonic()-query_start:.1f}s")
-
-                # last_seen ordering (user-confirmed) decides which TAG_LIMIT samples
-                # are visible in this window; first_seen orders the download queue below.
-                temp_conn.execute("DELETE FROM poll_cache")
-                for item in metadata:
-                    sha = str(item.get("sha256_hash") or "")
-                    if not sha:
-                        continue
-                    tags_csv = tags_to_csv(item.get("tags"))
-                    temp_conn.execute(
-                        "INSERT OR REPLACE INTO poll_cache "
-                        "(sha256_hash, tag, file_type, first_seen) VALUES (?, ?, ?, ?)",
-                        (sha, tags_csv, str(item.get("file_type") or ""),
-                         normalize_first_seen(item.get("first_seen"))),
-                    )
-                temp_conn.commit()
-
                 result = build_candidates(temp_conn, main_conn, tag, file_type,
                                           secondary_tag, wildcard_extra)
                 for sha256, api_type in result["skipped"]:
                     log_session(temp_conn, sha256, tag, api_type, "skipped",
-                                f"unsupported API file_type: {api_type}", secondary_tag,
-                                wildcard_extra, tag_rule=rule)
+                                f"unsupported API file_type: {api_type}",
+                                secondary_tag=secondary_tag, wildcard_extra=wildcard_extra,
+                                tag_rule=rule)
                 console("FILTER", f"rows={result['rows']} drop={result['rejected']} "
                         f"dup={result['duplicates']} bad_type={len(result['skipped'])} "
-                        f"candidates={len(result['candidates'])}")
+                        f"new={len(result['new'])} backlog={len(result['backlog'])}")
 
-                todo = result["candidates"]
+                todo = result["new"] + result["backlog"]
                 for index, (sha256, first_seen) in enumerate(todo, 1):
                     if STOP["requested"]:
                         raise StopRun("Ctrl+C")
-                    count = downloads_in_last_24h(main_conn)
-                    if count >= DAILY_CAP:
+                    if attempts_in_last_24h(main_conn) >= DAILY_CAP:
                         raise StopRun(f"daily cap of {DAILY_CAP} downloads reached")
+
+                    item = metadata_by_sha.get(sha256, {})
+                    outcome = handle_existing_file(main_conn, temp_conn, sha256, file_type,
+                                                   dest_dir, tag, secondary_tag,
+                                                   wildcard_extra, rule, first_seen, item)
+                    if outcome == "adopted":
+                        session_adopted += 1
+                        continue
+                    if outcome == "quarantined":
+                        session_quarantined += 1
+                        continue
 
                     wait_seconds = 60.0 / rate
                     if last_download is not None:
@@ -567,22 +689,34 @@ def run_poll_loop(auth_key: str, tag: str, dest_dir: Path, file_types: list,
                         interruptible_sleep(pause)
                     console("GET", f"{index}/{len(todo)} {sha256} first_seen={first_seen}")
 
+                    api_tags = tags_to_csv(item.get("tags"))
+                    attempt_epoch = time.time()
+                    record_attempt(main_conn, sha256, tag, secondary_tag, wildcard_extra,
+                                   rule, file_type, first_seen, item)
                     download_start = time.monotonic()
+                    created_path = None
                     try:
                         local_name = download_sample(auth_key, sha256, file_type, dest_dir, state)
-                        item = next((row for row in metadata
-                                     if str(row.get("sha256_hash")) == sha256), {})
-                        api_tags = tags_to_csv(item.get("tags"))
-                        main_conn.execute(
-                            "INSERT INTO downloads (sha256_hash, api_file_name, local_filename, "
-                            "tag, secondary_tag, wildcard_extra, api_tags, tag_rule, "
-                            "file_type, first_seen, downloaded_at, downloaded_epoch, status) "
-                            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                            (sha256, str(item.get("file_name") or ""), local_name, tag,
-                             secondary_tag, int(wildcard_extra), api_tags, rule,
-                             file_type, first_seen, utc_now(), time.time(), "success"),
-                        )
-                        main_conn.commit()
+                        created_path = dest_dir / local_name
+                        upsert_download(main_conn, {
+                            "sha256_hash": sha256,
+                            "api_file_name": text_field(item.get("file_name")),
+                            "local_filename": local_name,
+                            "tag": tag,
+                            "secondary_tag": secondary_tag,
+                            "wildcard_extra": int(wildcard_extra),
+                            "api_tags": api_tags,
+                            "tag_rule": rule,
+                            "file_type": file_type,
+                            "first_seen": first_seen,
+                            "downloaded_at": utc_now(),
+                            "downloaded_epoch": time.time(),
+                            "attempted_epoch": attempt_epoch,
+                            "signature": text_field(item.get("signature")),
+                            "file_size": text_field(item.get("file_size")),
+                            "last_seen": normalize_first_seen(item.get("last_seen")),
+                            "status": "success",
+                        })
                         log_session(temp_conn, sha256, tag, file_type, "success",
                                     secondary_tag=secondary_tag,
                                     wildcard_extra=wildcard_extra,
@@ -594,13 +728,13 @@ def run_poll_loop(auth_key: str, tag: str, dest_dir: Path, file_types: list,
                     except StopRun:
                         raise
                     except ApiError as exc:
-                        _record_failure(temp_conn, dest_dir, sha256, file_type,
-                                        tag, str(exc), secondary_tag, wildcard_extra, rule)
+                        _record_failure(temp_conn, sha256, file_type, tag, str(exc),
+                                        secondary_tag, wildcard_extra, rule, created_path)
                         errors += 1
                     except (OSError, ValueError, sqlite3.Error, zipfile.BadZipFile,
                             RuntimeError) as exc:
-                        _record_failure(temp_conn, dest_dir, sha256, file_type,
-                                        tag, str(exc), secondary_tag, wildcard_extra, rule)
+                        _record_failure(temp_conn, sha256, file_type, tag, str(exc),
+                                        secondary_tag, wildcard_extra, rule, created_path)
                         errors += 1
 
                     last_download = time.monotonic()
@@ -616,20 +750,20 @@ def run_poll_loop(auth_key: str, tag: str, dest_dir: Path, file_types: list,
         temp_conn.close()
         cleanup_temp()
         elapsed = time.monotonic() - started_at
-        console("SUMMARY", f"downloaded={session_downloads} errors={errors} "
+        console("SUMMARY", f"downloaded={session_downloads} adopted={session_adopted} "
+                f"quarantined={session_quarantined} errors={errors} "
                 f"elapsed={int(elapsed//60)}m{int(elapsed%60)}s temp_db=removed")
 
 
-def _record_failure(temp_conn, dest_dir, sha256, file_type, tag, message,
+def _record_failure(temp_conn, sha256, file_type, tag, message,
                     secondary_tag: str = "", wildcard_extra: bool = False,
-                    tag_rule: str = "") -> None:
+                    tag_rule: str = "", created_path: Path | None = None) -> None:
     for suffix in (".zip", f".{file_type}.part"):
         path = TEMP_DIR / f"{sha256}{suffix}"
         if path.exists():
             path.unlink()
-    final_path = dest_dir / f"{sha256}.{EXT_BY_TYPE[file_type]}"
-    if final_path.exists():
-        final_path.unlink()
+    if created_path is not None and created_path.exists():
+        created_path.unlink()
     log_session(temp_conn, sha256, tag, file_type, "error", message, secondary_tag,
                 wildcard_extra, tag_rule=tag_rule)
     console("ERROR", f"{sha256[:12]}... {message}")
