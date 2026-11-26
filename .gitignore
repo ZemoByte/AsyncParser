@@ -5,3 +5,6 @@
 *.7z
 *.p12
 *.pdb
+__pycache__/
+*.pyc
+Tools/MBDownloader/temp/
