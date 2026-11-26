@@ -5,9 +5,8 @@ Values come from the fixed vocabulary in `Docs/Plan.md` §4 (plus the `obfuscate
 
 | Short name | Full name | Where used | Example value |
 |---|---|---|---|
-| `lbl_sts` | `label_status` | `Data/DataSet.db` label index | `verified`, `unverified`, `needs_human_review` |
-| `hum_rev` | `needs_human_review` flag | `Data/DataSet.db` label index | `yes` / `no` |
-| `sug_fam` | `suggested_family` | `Data/DataSet.db` label index | `DcRat` |
+| `lbl_sts` | `label_status` | `Data/DataSet.db` label index | `verified`, `unverified`, `review`, `benign` |
+| `sug_fam` | `suggested_family` | `Data/DataSet.db` label index | `DcRat`, `XWorm`, `Benign` |
 | `obf_lvl` | `obfuscation_level` | `Data/DataSet.db` label index | `plain`, `obfuscated:ConfuserEx`, `unknown` |
 
 Value aliases:
@@ -15,6 +14,7 @@ Value aliases:
 | Short value | Full value | Field |
 |---|---|---|
 | `review` | `needs_human_review` | `lbl_sts` |
+| `benign` | `benign` | `lbl_sts` |
 
 Notes:
 

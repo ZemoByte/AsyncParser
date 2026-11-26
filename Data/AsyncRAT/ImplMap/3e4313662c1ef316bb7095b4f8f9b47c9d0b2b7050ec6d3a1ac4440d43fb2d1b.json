@@ -1,0 +1,1 @@
+{"fields": {"values": ["kernel32.dll!CheckRemoteDebuggerPresent", "kernel32.dll!GetModuleHandle", "kernel32.dll!SetThreadExecutionState", "ntdll.dll!RtlSetProcessIsCritical", "user32.dll!GetForegroundWindow", "user32.dll!GetWindowText"]}, "kind": "ImplMap", "producer": "impl_map", "schema_version": 1, "sha256": "3e4313662c1ef316bb7095b4f8f9b47c9d0b2b7050ec6d3a1ac4440d43fb2d1b"}

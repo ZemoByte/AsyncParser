@@ -47,9 +47,8 @@ def target_class_db(label: dict) -> str | None:
     suggested = str(label.get("sug_fam") or "").strip()
     if status == "verified":
         return "AsyncRAT.db"
-    if suggested == "Benign":
+    if status == "benign" and suggested == "Benign":
         return "Benign.db"
-    return None
     return None
 
 

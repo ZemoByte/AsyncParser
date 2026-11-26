@@ -1,0 +1,1 @@
+{"fields": {"values": ["winmm.dll!waveOutClose", "winmm.dll!waveOutOpen", "winmm.dll!waveOutPrepareHeader", "winmm.dll!waveOutUnprepareHeader", "winmm.dll!waveOutWrite"]}, "kind": "ImplMap", "producer": "impl_map", "schema_version": 1, "sha256": "0384e80d3e541b243f0bd66f0ca4e346a15574039c30e25060bf0c0a7f0e5e4e"}

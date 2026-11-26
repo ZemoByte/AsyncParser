@@ -35,31 +35,6 @@ def detect_obfuscator(path: Path) -> str | None:
     names = set()
     metadata = getattr(getattr(pe, "net", None), "mdtables", None)
     if metadata is not None:
-        for row in getattr(metadata, "TypeDef", []) or []:
-            names.add(str(getattr(row, "TypeName", "") or ""))
-        for row in getattr(metadata, "CustomAttribute", []) or []:
-            typed = getattr(row, "Type", None)
-            target = getattr(typed, "row", None) if typed is not None else None
-            if target is not None:
-                names.add(str(getattr(target, "TypeName", "") or ""))
-                names.add(str(getattr(target, "Name", "") or ""))
-    if "ConfusedByAttribute" in names:
-        return "ConfuserEx"
-    if "LoGiCdotNetAttribute" in names:
-        return "LoGiC.NET"
-    return None
-
-
-def detect_obfuscator(path: Path) -> str | None:
-    if dnfile is None or not is_dotnet(path):
-        return None
-    try:
-        pe = dnfile.dnPE(str(path))
-    except Exception:
-        return None
-    names = set()
-    metadata = getattr(getattr(pe, "net", None), "mdtables", None)
-    if metadata is not None:
         for table_name in ("TypeDef",):
             table = getattr(metadata, table_name, None)
             if table:
@@ -71,9 +46,18 @@ def detect_obfuscator(path: Path) -> str | None:
                 for row in table:
                     typed = getattr(row, "Type", None)
                     target = getattr(typed, "row", None)
-                    if target is not None:
+                    if target is None:
+                        continue
+                    # MemberRefRow: navigate Class.row -> TypeRef/TypeDef
+                    if type(target).__name__ == "MemberRefRow":
+                        cls = getattr(target, "Class", None)
+                        cls_row = getattr(cls, "row", None) if cls is not None else None
+                        if cls_row is not None:
+                            names.add(str(getattr(cls_row, "TypeName", "") or ""))
+                    else:
+                        # TypeRefRow or TypeDefRow
                         names.add(str(getattr(target, "TypeName", "") or ""))
-                        names.add(str(getattr(target, "Name", "") or ""))
+                    names.add(str(getattr(target, "Name", "") or ""))
     if "ConfusedByAttribute" in names:
         return "ConfuserEx"
     if "LoGiCdotNetAttribute" in names:
@@ -243,7 +227,7 @@ def main() -> int:
             family = str(report.get("yara_possible_family") or "")
             config = map_config(report.get("config"))
         if path in [p for _, p in benign_targets]:
-            status = "unverified" if is_net else "rejected_non_dotnet"
+            status = "benign" if is_net else "rejected_non_dotnet"
             suggested_family = "Benign" if is_net else ""
         else:
             status, suggested_family = label_status(is_net, family)

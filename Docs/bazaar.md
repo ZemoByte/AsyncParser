@@ -61,18 +61,18 @@ AsyncParser/
 ├── Samples/
 │   ├── AsyncRAT/        # option 1
 │   ├── OtherMalwares/   # option 2
-│   └── Benign/          # option 3; stays empty until its source is configured
+│   └── Benign/          # option 3; user hand-built test PEs may be present
 └── Tools/
     └── MBDownloader/
         ├── <downloader script>
-        ├── samples.db          # MAIN DB: whole sample dataset + dedup (persistent)
+        ├── samples.db          # append-only download ledger + dedup; dataset lives in Data/*.db
         └── temp/
             ├── <in-progress downloads>
             └── comparison.db   # TEMP DB: per-poll cache + run log (deleted at stop)
 ```
 
 - Extracted samples go into the three folders under `AsyncParser/Samples/`.
-- The **main SQL DB** holds all sample data and persists across runs; it lives under `AsyncParser/Tools/MBDownloader/`.
+- `samples.db` is the **download ledger only** (dedup + Bazaar metadata) and persists across runs under `AsyncParser/Tools/MBDownloader/`; labels and carved features live in `AsyncParser/Data/*.db`.
 - The **temporary comparison DB** and in-progress downloads live under `AsyncParser/Tools/MBDownloader/temp/`; the comparison DB is deleted on clean shutdown.
 
 Saved sample name: `<sha256_hash>.<ext>`, where the extension comes from the API's `file_type`. Keep only the extracted sample; delete the downloaded ZIP after successful verification.

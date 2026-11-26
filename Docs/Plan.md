@@ -23,7 +23,7 @@ Detect AsyncRAT .NET client payloads from static metadata, using capability feat
 
 ### Label verification [DECIDED]
 - `rat_king_parser` (pip `rat-king-parser`; supports AsyncRAT, DcRAT, VenomRAT, QuasarRAT, XWorm, XenoRat per its README). Used at **labeling time only, never as a model feature**. Check real CLI flags with `-h` before coding.
-- `verified` = .NET AND parser reports AsyncRAT AND config has non-placeholder hosts/ports (not `%...%`, not `obfuscated_key_*`). `benign` is a separate label status for hand-supplied benign .NET samples.
+- `verified` = .NET (static CLR header) AND parser's YARA family reports AsyncRAT. Config is stored only when returned; missing or placeholder config does **not** downgrade a sample (`Docs/DECISIONS.md` §3). `benign` is a separate label status for hand-supplied benign .NET samples (§31/Q71).
 - .NET but failed → `unverified`. Native tagged AsyncRAT → `Unverified` + `rejected_non_dotnet`.
 - If the parser reports another family, store it in `suggested_family`; do not force AsyncRAT.
 - Optional second check: CAPE's AsyncRAT config extractor **[TODO: confirm it can run standalone before depending on it]**. Disagreement between tools = `needs_human_review`, checked in dnSpyEx. Never auto-label a disagreement as "fork".
@@ -110,10 +110,10 @@ Report the **abstain rate per class** next to accuracy (e.g. "abstained on 40% o
 - Write `Docs/limitations.md`: native/droppers/loaders out of scope; runtime-decrypted payloads and encrypted reflection hide references; padding with benign-looking references can evade a presence-based model.
 
 ## 11. Build order (each step has a check)
-1. **[PARTIAL]** Use `Tools/MBDownloader/samples.db` as the append-only download ledger (SHA256 index, tag rule, file type, Bazaar metadata) and define the label vocabulary → check: DB validates, no unknown families. Ledger and downloader are done; label vocabulary and the separate dataset database are not started.
-2. **[NOT STARTED]** Add `rat_king_parser` verification → check: verified/unverified counts printed, placeholders rejected.
+1. **[DONE]** Append-only download ledger `Tools/MBDownloader/samples.db` and label vocabulary (including `benign`) are defined; separate `Data/*.db` files created by the importer.
+2. **[DONE]** `rat_king_parser` verification via `Tools/Labeling/labeler.py` → check: statuses recorded in `DataSet.db`, parser exceptions captured in `config.parse_error`.
 3. **[NOT STARTED]** Collect benign .NET and other-RAT negatives; build clusters and splits → check: no cluster spans splits; cluster counts reported.
-4. **[NOT STARTED]** Layer A extractor + vocabulary (training only, ≥3 clusters) → check: `Docs/vocab.json` reproducible.
+4. **[PARTIAL]** Five Layer A carvers exist (`ImportTable`, `TypeRef`, `MemberRef`, `AssemblyRef`, `ImplMap`); the training-only vocabulary (`Docs/vocab.json`) is not fitted until splits exist.
 5. **[NOT STARTED]** LightGBM + TLSH kNN + trivial baseline → check: `Docs/results.md` with confusion matrices and per-class coverage.
 6. **[NOT STARTED]** Abstention gate with data-calibrated thresholds → check: abstain rates reported.
 7. **[NOT STARTED]** Ablations for Layer B and extra signals, hand-check ~20 samples in dnSpyEx → check: ablation table.
@@ -129,10 +129,10 @@ Report the **abstain rate per class** next to accuracy (e.g. "abstained on 40% o
 - `Tools/requirements.txt` (`pyzipper`), `.gitignore` excludes `Samples/` and downloaded sample extensions, `AGENTS.md` §9 forbids committing `Samples/`.
 
 **Done — Phase 0 labeling/import (synthetic-tested; importer run on real generated data):**
-- `Tools/Labeling/labeler.py`: reads the ledger by SHA-256, checks the PE CLR header, batches `rat_king_parser -n`, writes label JSON and `.labeler.done`; benign hand-made EXEs are labeled as `unverified` with `sug_fam=Benign`.
+- `Tools/Labeling/labeler.py`: reads the ledger by SHA-256, checks the PE CLR header, batches `rat_king_parser -n`, writes label JSON and `.labeler.done`; benign hand-made EXEs must be labeled as `benign` with `sug_fam=Benign` (§31/Q71).
 - `Tools/_carver_common.py` plus `ImportTable`, `TypeRef`, `MemberRef`, `AssemblyRef`, `ImplMap`: one carver per folder, each writes `Data/<Class>/<Tool>/<sha256>.json` plus `.done`.
 - `Tools/Importer/importer.py`: creates `Data/DataSet.db` and class DBs, auto-`ALTER`s columns, imports labels and carved JSONs, enforces markers and schema version, deletes markers after success, and places rows by label.
-- Synthetic tests: `/tmp/opencode/test_labeler.py`, `/tmp/opencode/test_importer.py`. End-to-end importer run produced 180 dataset rows, 48 `AsyncRAT.db` rows, 15 `OtherMalwares.db` rows, and 10 `Benign.db` rows.
+- Synthetic tests: `/tmp/opencode/test_labeler.py`, `/tmp/opencode/test_importer.py`. **Verified after the clean rerun (read-only):** `DataSet.db` 180 rows, `AsyncRAT.db` 48 rows, `Benign.db` 10 rows, `OtherMalwares.db` absent, all carving columns present, 0 `.done` markers left (`Docs/DECISIONS.md` §33).
 
 **Not done yet:**
 - Obfuscator fingerprint detection (repos cloned under `Tools/ObfuscatorRepos/`, currently `obf_lvl` stays `unknown`).
@@ -141,4 +141,4 @@ Report the **abstain rate per class** next to accuracy (e.g. "abstained on 40% o
 - Clusters and temporal splits; `cluster_id` is not populated yet.
 - Abstention thresholds, ablations, ~20-sample dnSpyEx human check, Stage 2 explainer templates, `Docs/limitations.md`.
 - Neural encoder / language-model explainer (stretch only).
-- Live verification after the final code changes: real API run, 429 path, daily cap, error limit, Ctrl+C during a download.
+- Live verification: **AUTHORIZED by user** (`Docs/DECISIONS.md` §35); network is available in the VM and the user accepts real sample downloads. Not yet executed. Synthetic mocked-API tests already cover 429 / cap / error-limit / single-pass / Ctrl+C (12/12 downloader tests). Use `MB_AUTH_KEY` securely; never print or log it.

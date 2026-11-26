@@ -1,0 +1,1 @@
+{"fields": {"values": ["avicap32.dll!capCreateCaptureWindowA", "avicap32.dll!capGetDriverDescriptionA", "gdi32.dll!BitBlt", "user32!mouse_event", "user32.dll!keybd_event"]}, "kind": "ImplMap", "producer": "impl_map", "schema_version": 1, "sha256": "89f0becb9523101baa43358b29170968c2c23f8ed60f1667349788ec0d084aca"}

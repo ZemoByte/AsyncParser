@@ -6,7 +6,7 @@ Status: **decisions only — no code written**.
 
 ## 1. Labels, not "verified for everyone" (Q1)
 
-- Each downloaded sample gets exactly **one `label_status`** from the fixed vocabulary in `Docs/Plan.md` §4: `verified | unverified | rejected_non_dotnet | rejected_hash_mismatch | reference_only | needs_human_review`.
+- Each sample gets exactly **one `label_status`** from the fixed vocabulary in `Docs/Plan.md` §4: `verified | unverified | rejected_non_dotnet | rejected_hash_mismatch | reference_only | needs_human_review | benign` (`benign` added in §31/Q71).
 - `verified` is one value among many. It is not the required outcome for every sample.
 - **Unverified samples are kept**, not thrown away.
 - Phase 0 goal has two jobs: labels and clusters. 0.1 does labels; clusters come later (0.2).
@@ -53,7 +53,7 @@ Status: **decisions only — no code written**.
 - Avoid analyst-style carvings that depend on how one malware was built.
 - Never use `is_dotnet` or any file-format column as a model feature (`AGENTS.md` §8).
 - **One carving job per folder**: `Tools/ImportTable/`, `Tools/TypeRef/`, `Tools/MemberRef/`, `Tools/AssemblyRef/`, `Tools/ImplMap/`, with scripts inside each folder. Labeler separate under `Tools/Labeling/`. Each carver reads by SHA-256 and writes one JSON file.
-- Carved JSON location (Q16): `Data/Carved/<Class>/<Tool>/<sha256>.json`, e.g. `Data/Carved/AsyncRAT/ImportTable/<sha256>.json`. Three class folders: `AsyncRAT`, `OtherMalwares`, `Benign`.
+- Carved JSON location: `Data/<Class>/<Tool>/<sha256>.json`, e.g. `Data/AsyncRAT/ImportTable/<sha256>.json`. §20/Q41 supersedes the earlier `Data/Carved/...` wording. Three class folders: `AsyncRAT`, `OtherMalwares`, `Benign`.
 - **Label first, then carve into the class folder** (Phase 0: "before any carving").
 
 ## 6. File placement (user instruction, after Q10)
@@ -65,7 +65,7 @@ Status: **decisions only — no code written**.
 ## 7. Short names and family disagreement (Q11, Q14, Q17)
 
 - Short, readable lowercase snake_case names are used in the DB. Full map: `Docs/SHORT_NAMES.md`.
-- Parser names another family (e.g. DcRat) → do **not** verify as AsyncRAT; write `hum_rev=yes` (needs human review) and `sug_fam=DcRat`.
+- Parser names another family (e.g. DcRat) → do **not** verify as AsyncRAT; write `lbl_sts=review` (needs human review) and `sug_fam=DcRat`. The `hum_rev` flag was dropped in §11.
 
 ## 8. Config fields (Q19)
 
@@ -80,8 +80,8 @@ Status: **decisions only — no code written**.
 
 ## 10. Obfuscator fingerprints (Q21)
 
-- Fixed list: `ConfuserEx`, `dotFuscator`, `Eazfuscator`, `Obfuscar`, `Agile.NET`.
-- None found → `plain`; unclear → `unknown`; off-list → `unknown`.
+- **Superseded by §30/Q61:** the vocabulary is the 8 cloned repos (BitMono, Codecepticon, Hydra, LoGiC.NET, MindLated, neo-ConfuserEx, obfuscar, Z00bfuscator). The earlier 5-name list is void.
+- None found → `plain`; unclear → `unknown`; off-list → `unknown`. Marker detection remains `[TEST]` and unimplemented.
 
 ## 11. Label status value (Q22, Q26)
 
@@ -90,18 +90,18 @@ Status: **decisions only — no code written**.
 
 ## 12. Carver JSON output (Q23)
 
-- Shape: `{"sha256": "...", "kind": "ImportTable", "values": ["dll!ImportName", ...]}` — sorted unique external references, presence only.
+- Shape: `{"sha256": "...", "kind": "<Tool>", "values": ["dll!symbol", ...]}` — sorted unique external references, presence only. For `ImplMap` the symbol is the P/Invoke import name; for `ImportTable` it comes from the PE import directory.
 - Counts are **not** in carver JSON. Counts (TypeRefs, MemberRefs, P/Invokes, sections, entropy) stay in a separate group: the "trivial baseline" in `Docs/Plan.md` §6.
 
 ## 13. JSON-only tools, one importer (Q25, Q27, Q28, Q29, Q30)
 
 - `Tools/Labeling/labeler.py`: reads `samples.db` by SHA-256, batches paths to `rat_king_parser -n`, checks CLR header statically. Writes `Data/Labels/<sha256>.json` only — never the DB.
-- Label JSON fields: `sha256`, `lbl_sts`, `sug_fam`, `obf_lvl`, `parser_version`, `config`.
-- Carvers write only `Data/Carved/<Class>/<Tool>/<sha256>.json`.
-- `Tools/Importer/importer.py` is the **only** tool allowed to write `Data/DataSet.db`. It reads `Data/Labels/*.json` and `Data/Carved/**/*.json`.
+- Label JSON fields: `sha256`, `lbl_sts`, `sug_fam`, `is_dotnet`, `obf_lvl`, `parser_version`, `config`.
+- Carvers write only `Data/<Class>/<Tool>/<sha256>.json` (§20/Q41).
+- `Tools/Importer/importer.py` is the **only** tool allowed to write **any** DB: `DataSet.db` plus the three class DBs (§20/Q41). It reads `Data/Labels/*.json` and `Data/<Class>/<Tool>/*.json`.
 - No carver, labeler or writer imports a database module.
 - Import runs explicitly after labeling + carving finish; no automatic DB writes during extraction.
-- Importer is connected to carvers/labelers so it knows when the job is finished and when to take their extracted data (mechanism open — §14).
+- The importer knows the tools finished via `.done` markers next to their JSONs (§23), not by calling their code.
 
 ## 14. JSON envelope and auto-added columns (Q31, Q32, Q36)
 
@@ -135,7 +135,7 @@ Status: **decisions only — no code written**.
 ## 20. Class DB writer (Q41)
 
 - The importer reads `Data/<Class>/<Tool>/<sha256>.json` outputs and writes all four DBs.
-- Earlier §5 wrote `Data/Carved/<Class>/<Tool>/...`; Q41 corrects this to `Data/<Class>/<Tool>/...`. Confirm at build time.
+- Earlier §5 wrote `Data/Carved/<Class>/<Tool>/...`; Q41 corrected this to `Data/<Class>/<Tool>/...`. §24 confirms the notation.
 
 ## 21. Obfuscator fingerprints (Q43)
 
@@ -183,13 +183,13 @@ Three distinct states, with exact sentinel strings:
 - Only successfully downloaded ledger rows get the parser run. Quarantined / hash-mismatch rows get `rejected_hash_mismatch` without running the parser.
 - Importer creates `DataSet.db` and the three class DBs if missing (check → create if absent → read if present), then auto-`ALTER`s columns.
 - Importer stops with an exact error on: missing JSON, invalid JSON, unknown `kind`, higher `schema_version`, conflicting field type, missing `.done` marker. No silent skip.
-- `Data/Clusters/.clusterer.done` is required before import.
+- Planned for 0.2: `Data/Clusters/.clusterer.done` will be required before import. **Not enforced** while clustering is deferred (§26/Q73).
 - `is_dotnet` is metadata in `DataSet.db` only — **never** a model feature.
 
 ## 28. Status — closed
 
-- 57 questions asked and answered. **No remaining 0.1 uncertainties from the advisor.** No code written.
-- 0.2 and 0.3 are noted in §26 but not designed.
+- Historical: the 0.1 **design** was closed at Q57. Interviewing continued through Q73 during the build (§30–§33).
+- 0.2 and 0.3 remain noted in §26, not designed.
 
 ## 29. Build tasks recorded (user, 2026-11-27)
 
@@ -213,8 +213,28 @@ Three distinct states, with exact sentinel strings:
 - Advisor judgement on the review: #1 (review router) correct; #2 rejected as above; #10 is **not** a typo — the whole `OTHER_RAT_FAMILIES` routing branch must be removed per Q58, and canonical values are `DcRat, NjRAT, Remcos, VenomRAT, XWorm, QuasarRAT, XenoRat, OtherMalware`; #3 sample index must be keyed by SHA-256 only; #7 read `rat-king-parser --version` at runtime.
 - Observed DB state **before** these fixes (read-only check): 170 rows — 48 `verified`, 76 `unverified`, 31 `rejected_non_dotnet`, 15 `review`; all 15 review rows had `target_class_db=OtherMalwares.db` and lowercase raw `sug_fam`; no carved JSONs existed, so no capability columns were imported. These are in the user's fix queue.
 
-## 32. Permission boundary (user instruction, 2026-11-27)
+## 33. Fix queue and rerun — resolved (2026-11-27)
 
-- The assistant may write **only under `Docs/`** — this holds even in build mode.
-- No edits to `.py` files, `Data/` databases/JSONs/markers, or any other project file.
-- Code fixes and pipeline runs are performed by the user or their fixer queue. The assistant's role is read-only verification plus decision documentation.
+- Earlier state: `labeler.py` wrote `lbl_sts=unverified` for benign files; `importer.py` routed any `sug_fam=Benign` to `Benign.db` without checking `lbl_sts`.
+- **Applied fixes:** `labeler.py` benign branch now writes `status = "benign" if is_net else "rejected_non_dotnet"` with `suggested_family = "Benign"` (`labeler.py:221-222`); `importer.py` routes to `Benign.db` only when `status == "benign" and suggested == "Benign"` (`importer.py:50-51`).
+- Rerun performed in order: labeler (`--samples-root Samples --benign-root Samples/Benign`), five carvers, importer.
+- **Verified after rerun (read-only):** `DataSet.db` 180 rows — 48 `verified`, 76 `unverified`, 31 `rejected_non_dotnet`, 15 `review`, 10 `benign`; `AsyncRAT.db` 48 rows; `Benign.db` 10 rows; `OtherMalwares.db` absent (no verified non-AsyncRAT label); all 15 review rows have `target_class_db=NULL`; all five carving columns present in all DBs; 0 `.done` markers left.
+- Carving now complete: 134 / 5 / 10 JSONs per tool in `AsyncRAT` / `OtherMalwares` / `Benign` for each of the five carvers.
+- Phase 0.1 is satisfied. Deferred by agreement: the full obfuscator fingerprint set (two markers implemented in §34; no matches in current data, so `obf_lvl=unknown`), clusters / `cluster_id`, splits, models, live downloader paths.
+
+## 34. Fingerprint detection fix and state (2026-11-27)
+
+- `detect_obfuscator()` in `Tools/Labeling/labeler.py` now correctly navigates `CustomAttribute` → `MemberRefRow` → `Class.row` → `TypeRef/TypeDef` to read the attribute type name. Previously it read `target.TypeName` which does not exist on `MemberRefRow`, so attribute type names were never collected.
+- Scanned all 180 samples: no `ConfusedByAttribute` or `LoGiCdotNetAttribute` found. All 180 rows correctly remain `obf_lvl=unknown`.
+- `obf_lvl` detection is now functional; future samples with these markers will be labeled `obfuscated:ConfuserEx` or `obfuscated:LoGiC.NET`.
+- Test path fix: `/tmp/opencode/test_mb.py` line 237 updated from `REPO / "Tools/MBDownloader/bazaar.md"` to `REPO / "Docs/bazaar.md"`. All 12 downloader tests now pass.
+- Outstanding: human review of 15 review rows, true live MalwareBazaar calls, clustering / `cluster_id` (tlsh not installed).
+
+## 35. Network assumption correction (2026-11-27)
+
+- Earlier "no network" statements were inherited from `AGENTS.md` §9 ("Assume everything runs in an isolated VM with no network and no shared folders"), **not** a measured result from this session.
+- Network availability has not been tested by the assistant here, so live MalwareBazaar calls remain **untested**, not proven impossible.
+- A live call uses `MB_AUTH_KEY` and may download samples; it requires explicit user authorization. Never print or log the key.
+- **Decision (user, 2026-11-27): live MalwareBazaar calls are AUTHORIZED.** The user confirmed network is available inside the VM and explicitly authorizes a real API run, overriding the `AGENTS.md` §9 isolation assumption for this action.
+- The 429, cap, error-limit, single-pass and Ctrl+C paths are already covered by synthetic mocked-API tests (12/12 downloader tests pass). A live call would additionally prove connectivity and API compatibility.
+- Status: **authorized, not yet executed.** The user accepts that real samples may be downloaded into `Samples/`. Supply `MB_AUTH_KEY` securely; never print or log it.
