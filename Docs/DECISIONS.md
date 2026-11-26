@@ -1,7 +1,7 @@
 # DECISIONS.md — Design interview log (Phase 0: labeling)
 
 Date: 2026-11-26
-Source: interview questions Q1–Q61 with the user.
+Source: interview questions Q1–Q73 with the user.
 Status: **decisions only — no code written**.
 
 ## 1. Labels, not "verified for everyone" (Q1)
@@ -204,3 +204,17 @@ Three distinct states, with exact sentinel strings:
 - **Q60 — family vocabulary:** fixed mapping from the parser's raw family string → canonical class vocabulary; off-list → `review` with **no** class DB. The case-sensitive `OTHER_RAT_FAMILIES` check in `importer.py:20-21` is not enough.
 - **Q61 — obfuscator vocabulary:** use the 8 cloned repos as the set: BitMono, Codecepticon, Hydra, LoGiC.NET, MindLated, neo-ConfuserEx, obfuscar, Z00bfuscator. Drop dotFuscator, Eazfuscator and Agile.NET (no evidence). `obf_lvl` stays `unknown` until markers are derived from the repos by static reading.
 - Ledger state: 170 rows, all `status=success`; 180 `.exe` files on disk. A real end-to-end run therefore needs all 170 labels, not a 3-sample label batch, or the importer stops on missing label JSONs.
+
+## 31. Fix-queue decisions (Q71–Q73, 2026-11-27)
+
+- **Q71 — benign label status:** add `benign` to the `label_status` vocabulary. Benign .NET files get `lbl_sts=benign` + `sug_fam=Benign` → `Benign.db`. **Never** reuse `verified`: `verified` still means ".NET + parser reports AsyncRAT" (§3). The review's proposal to mark benign as `verified` was rejected.
+- **Q72 — done-marker correctness:** `write_marker` in all five carvers must run **after** the sample loop. Writing it inside the loop lets a crashed run leave a valid `.done`, so the importer would accept partial carving data. Severity: **HIGH**, not LOW.
+- **Q73 — sequencing:** no 0.2 clustering design interview now. 0.2 stays deferred while the Q71/Q72 fixes land.
+- Advisor judgement on the review: #1 (review router) correct; #2 rejected as above; #10 is **not** a typo — the whole `OTHER_RAT_FAMILIES` routing branch must be removed per Q58, and canonical values are `DcRat, NjRAT, Remcos, VenomRAT, XWorm, QuasarRAT, XenoRat, OtherMalware`; #3 sample index must be keyed by SHA-256 only; #7 read `rat-king-parser --version` at runtime.
+- Observed DB state **before** these fixes (read-only check): 170 rows — 48 `verified`, 76 `unverified`, 31 `rejected_non_dotnet`, 15 `review`; all 15 review rows had `target_class_db=OtherMalwares.db` and lowercase raw `sug_fam`; no carved JSONs existed, so no capability columns were imported. These are in the user's fix queue.
+
+## 32. Permission boundary (user instruction, 2026-11-27)
+
+- The assistant may write **only under `Docs/`** — this holds even in build mode.
+- No edits to `.py` files, `Data/` databases/JSONs/markers, or any other project file.
+- Code fixes and pipeline runs are performed by the user or their fixer queue. The assistant's role is read-only verification plus decision documentation.

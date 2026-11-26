@@ -18,5 +18,14 @@ Samples/
 *.jar
 __pycache__/
 *.pyc
+*.pyo
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.DS_Store
+Thumbs.db
+*.tmp
+*.bak
 Tools/MBDownloader/temp/
 Tools/ObfuscatorRepos/
+.obsidian/

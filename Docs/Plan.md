@@ -19,15 +19,15 @@ Detect AsyncRAT .NET client payloads from static metadata, using capability feat
 
 ## 4. Data and labels
 ### Class vocabulary [DECIDED]
-`AsyncRAT_Client`, `AsyncRAT_Plugin`, `AsyncRAT_Server`, `AsyncRAT_Reference`, `QuasarRAT`, `DcRat`, `NjRAT`, `Remcos`, `VenomRAT`, `XWorm`, `OtherMalware`, `Benign`, `Unverified`, `Excluded`.
+`AsyncRAT_Client`, `AsyncRAT_Plugin`, `AsyncRAT_Server`, `AsyncRAT_Reference`, `QuasarRAT`, `DcRat`, `NjRAT`, `Remcos`, `VenomRAT`, `XWorm`, `XenoRat`, `OtherMalware`, `Benign`, `Unverified`, `Excluded`.
 
 ### Label verification [DECIDED]
 - `rat_king_parser` (pip `rat-king-parser`; supports AsyncRAT, DcRAT, VenomRAT, QuasarRAT, XWorm, XenoRat per its README). Used at **labeling time only, never as a model feature**. Check real CLI flags with `-h` before coding.
-- `verified` = .NET AND parser reports AsyncRAT AND config has non-placeholder hosts/ports (not `%...%`, not `obfuscated_key_*`).
+- `verified` = .NET AND parser reports AsyncRAT AND config has non-placeholder hosts/ports (not `%...%`, not `obfuscated_key_*`). `benign` is a separate label status for hand-supplied benign .NET samples.
 - .NET but failed → `unverified`. Native tagged AsyncRAT → `Unverified` + `rejected_non_dotnet`.
 - If the parser reports another family, store it in `suggested_family`; do not force AsyncRAT.
 - Optional second check: CAPE's AsyncRAT config extractor **[TODO: confirm it can run standalone before depending on it]**. Disagreement between tools = `needs_human_review`, checked in dnSpyEx. Never auto-label a disagreement as "fork".
-- Manifest columns to add: `label_status` (verified | unverified | rejected_non_dotnet | rejected_hash_mismatch | reference_only | needs_human_review), `label_source`, `suggested_family`, `obfuscation_level` (plain | obfuscated | unknown), config columns (hosts, ports, mutex, key, salt).
+- Manifest columns to add: `label_status` (verified | unverified | rejected_non_dotnet | rejected_hash_mismatch | reference_only | needs_human_review | benign), `label_source`, `suggested_family`, `obfuscation_level` (plain | obfuscated | unknown), config columns (hosts, ports, mutex, key, salt).
 
 ### Data needs [TODO]
 - Pull a larger MalwareBazaar AsyncRAT set. Audit tags for fork contamination (DcRat, Quasar, VenomRAT).

@@ -24,12 +24,75 @@ try:
 except Exception:  # pragma: no cover - dnfile is a declared dependency
     dnfile = None
 
+
+def detect_obfuscator(path: Path) -> str | None:
+    if dnfile is None or not is_dotnet(path):
+        return None
+    try:
+        pe = dnfile.dnPE(str(path))
+    except Exception:
+        return None
+    names = set()
+    metadata = getattr(getattr(pe, "net", None), "mdtables", None)
+    if metadata is not None:
+        for row in getattr(metadata, "TypeDef", []) or []:
+            names.add(str(getattr(row, "TypeName", "") or ""))
+        for row in getattr(metadata, "CustomAttribute", []) or []:
+            typed = getattr(row, "Type", None)
+            target = getattr(typed, "row", None) if typed is not None else None
+            if target is not None:
+                names.add(str(getattr(target, "TypeName", "") or ""))
+                names.add(str(getattr(target, "Name", "") or ""))
+    if "ConfusedByAttribute" in names:
+        return "ConfuserEx"
+    if "LoGiCdotNetAttribute" in names:
+        return "LoGiC.NET"
+    return None
+
+
+def detect_obfuscator(path: Path) -> str | None:
+    if dnfile is None or not is_dotnet(path):
+        return None
+    try:
+        pe = dnfile.dnPE(str(path))
+    except Exception:
+        return None
+    names = set()
+    metadata = getattr(getattr(pe, "net", None), "mdtables", None)
+    if metadata is not None:
+        for table_name in ("TypeDef",):
+            table = getattr(metadata, table_name, None)
+            if table:
+                for row in table:
+                    names.add(str(getattr(row, "TypeName", "") or ""))
+        for table_name in ("CustomAttribute",):
+            table = getattr(metadata, table_name, None)
+            if table:
+                for row in table:
+                    typed = getattr(row, "Type", None)
+                    target = getattr(typed, "row", None)
+                    if target is not None:
+                        names.add(str(getattr(target, "TypeName", "") or ""))
+                        names.add(str(getattr(target, "Name", "") or ""))
+    if "ConfusedByAttribute" in names:
+        return "ConfuserEx"
+    if "LoGiCdotNetAttribute" in names:
+        return "LoGiC.NET"
+    return None
+
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent.parent
 DEFAULT_DB = ROOT / "Tools" / "MBDownloader" / "samples.db"
 DEFAULT_SAMPLES = ROOT / "Samples"
 DEFAULT_OUT = ROOT / "Data"
-PARSER_VERSION = "4.2.4"
+def parser_version() -> str:
+    proc = subprocess.run(
+        ["rat-king-parser", "-v"], capture_output=True, text=True, check=True
+    )
+    parts = proc.stdout.strip().split()
+    if len(parts) < 2:
+        raise RuntimeError("could not read rat-king-parser version")
+    return parts[-1]
 def is_dotnet(path: Path) -> bool:
     try:
         pe = pefile.PE(str(path), fast_load=True)
@@ -64,14 +127,14 @@ def label_status(is_net: bool, family: str) -> tuple[str, str]:
     return "unverified", ""
 
 
-def obfuscation_level(is_net: bool, report: dict | None) -> str:
+def obfuscation_level(is_net: bool, report: dict | None, path: Path) -> str:
     if report is None or isinstance(report.get("config"), str):
         return "unknown"
     if not is_net:
         return "unknown"
-    # Obfuscator fingerprints are not detected by raw byte scans. They are
-    # supplied and checked separately; until then every successful parse is
-    # reported as unknown rather than guessed.
+    fingerprint = detect_obfuscator(path)
+    if fingerprint is not None:
+        return f"obfuscated:{fingerprint}"
     return "unknown"
 
 
@@ -102,12 +165,20 @@ def run_parser(paths: list[Path]) -> dict[str, dict]:
     return reports
 
 
-def find_sample_path(samples_root: Path, sha256: str) -> Path | None:
-    matches = [path for path in samples_root.rglob("*")
-               if path.is_file() and path.stem.lower() == sha256.lower()]
-    if len(matches) == 1:
-        return matches[0]
-    return None
+def build_sample_index(samples_root: Path) -> dict[str, Path]:
+    index = {}
+    for class_dir in (samples_root / "AsyncRAT", samples_root / "OtherMalwares",
+                      samples_root / "Benign"):
+        if not class_dir.is_dir():
+            continue
+        for path in class_dir.iterdir():
+            if path.is_file():
+                index[path.stem.lower()] = path
+    return index
+
+
+def find_sample_path(index: dict[str, Path], sha256: str) -> Path | None:
+    return index.get(sha256.lower())
 
 
 def write_json(path: Path, payload: dict) -> None:
@@ -130,6 +201,7 @@ def main() -> int:
     benign_root = args.benign_root.resolve()
     out_root = args.out.resolve()
     labels_dir = out_root / "Labels"
+    sample_index = build_sample_index(samples_root)
 
     connection = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
     try:
@@ -146,7 +218,7 @@ def main() -> int:
     for sha256, status in rows:
         if status not in {"success", "adopted"}:
             continue
-        path = find_sample_path(samples_root, sha256)
+        path = find_sample_path(sample_index, sha256)
         if path is None:
             raise RuntimeError(f"sample file not found for {sha256}")
         ledger_targets.append((sha256, path))
@@ -159,6 +231,7 @@ def main() -> int:
             benign_targets.append((hashlib.sha256(path.read_bytes()).hexdigest(), path))
 
     reports = run_parser([path for _, path in ledger_targets])
+    detected_parser_version = parser_version()
 
     targets = ledger_targets + benign_targets
     for sha256, path in targets:
@@ -186,8 +259,8 @@ def main() -> int:
                 "lbl_sts": status,
                 "sug_fam": suggested_family,
                 "is_dotnet": is_net,
-                "obf_lvl": obfuscation_level(is_net, report),
-                "parser_version": PARSER_VERSION if report is not None else "",
+                "obf_lvl": obfuscation_level(is_net, report, path),
+                "parser_version": detected_parser_version if report is not None else "",
                 "config": config,
             },
         }

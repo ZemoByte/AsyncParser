@@ -17,10 +17,29 @@ DATA_DIR = ROOT / "Data"
 SAMPLES_DB = ROOT / "Tools" / "MBDownloader" / "samples.db"
 SUPPORTED_SCHEMA_VERSION = 1
 TOOLS = ("ImportTable", "TypeRef", "MemberRef", "AssemblyRef", "ImplMap")
-OTHER_RAT_FAMILIES = {"dcrat", "njrat", "remcos", "venomrat", "xworm",
-                      "quasarrat", "xenorat", "othermalware"}
+FAMILY_MAP = {
+    "asyncrat": "AsyncRAT",
+    "dcrat": "DcRat",
+    "quasarrat": "QuasarRAT",
+    "venomrat": "VenomRAT",
+    "xworm": "XWorm",
+    "xenorat": "XenoRat",
+    "benign": "Benign",
+    "no match": "",
+    "": "",
+}
 EXCLUDED_LABELS = {"unverified", "review", "rejected_non_dotnet",
                    "rejected_hash_mismatch", "reference_only"}
+
+
+def canonical_family(raw) -> str:
+    value = str(raw or "").strip()
+    if not value:
+        return ""
+    canonical = FAMILY_MAP.get(value.lower())
+    if canonical is None:
+        raise RuntimeError(f"unknown suggested family: {value}")
+    return canonical
 
 
 def target_class_db(label: dict) -> str | None:
@@ -28,10 +47,9 @@ def target_class_db(label: dict) -> str | None:
     suggested = str(label.get("sug_fam") or "").strip()
     if status == "verified":
         return "AsyncRAT.db"
-    if status == "review" and suggested.lower() in OTHER_RAT_FAMILIES:
-        return "OtherMalwares.db"
     if suggested == "Benign":
         return "Benign.db"
+    return None
     return None
 
 
@@ -224,6 +242,7 @@ def main() -> int:
                 if sha256 not in labels:
                     raise RuntimeError(f"missing label JSON for {sha256}")
                 label = labels[sha256]["fields"]
+            label["sug_fam"] = canonical_family(label.get("sug_fam", ""))
             target_class = target_class_db(label)
             row = {"sha256": sha256, "target_class_db": target_class}
             for key in ("lbl_sts", "sug_fam", "obf_lvl", "parser_version"):

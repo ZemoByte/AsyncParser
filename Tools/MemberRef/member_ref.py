@@ -64,6 +64,7 @@ def main() -> int:
     samples_root = args.samples_root.resolve()
     out_root = args.out.resolve()
     processed = 0
+    classes = set()
     for class_name, path in iter_samples(samples_root):
         sha256 = sha256_file(path)
         values = carve(path)
@@ -77,6 +78,8 @@ def main() -> int:
             }
             write_json(out_root / class_name / KIND / f"{sha256}.json", payload)
             processed += 1
+        classes.add(class_name)
+    for class_name in sorted(classes):
         write_marker(out_root / class_name / KIND)
     print(f"carved {processed} samples into {out_root}")
     return 0
