@@ -135,10 +135,10 @@ Report the **abstain rate per class** next to accuracy (e.g. "abstained on 40% o
 - Synthetic tests: `/tmp/opencode/test_labeler.py`, `/tmp/opencode/test_importer.py`. **Verified after the clean rerun (read-only):** `DataSet.db` 180 rows, `AsyncRAT.db` 48 rows, `Benign.db` 10 rows, `OtherMalwares.db` absent, all carving columns present, 0 `.done` markers left (`Docs/DECISIONS.md` §33).
 
 **Not done yet:**
-- Obfuscator fingerprint detection (repos cloned under `Tools/ObfuscatorRepos/`, currently `obf_lvl` stays `unknown`).
+- Obfuscator fingerprint detection: two markers implemented (`ConfusedByAttribute`, `LoGiCdotNetAttribute`); no matches in 180 samples. Full repo-derived fingerprint set still pending.
 - Reference archive contents inspection and mapping; confirm CAPE extractor can run standalone.
 - Layer A extractor and `Docs/vocab.json`; LightGBM, TLSH kNN and trivial baseline; `Docs/results.md`.
-- Clusters and temporal splits; `cluster_id` is not populated yet.
+- Clusters: `Tools/Clustering/clusterer.py` implemented; `cluster_id` populated (44 clusters, 13 multi-member). Temporal splits still pending.
 - Abstention thresholds, ablations, ~20-sample dnSpyEx human check, Stage 2 explainer templates, `Docs/limitations.md`.
 - Neural encoder / language-model explainer (stretch only).
 - Live verification: **AUTHORIZED by user** (`Docs/DECISIONS.md` §35); network is available in the VM and the user accepts real sample downloads. Not yet executed. Synthetic mocked-API tests already cover 429 / cap / error-limit / single-pass / Ctrl+C (12/12 downloader tests). Use `MB_AUTH_KEY` securely; never print or log it.
