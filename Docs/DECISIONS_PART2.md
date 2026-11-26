@@ -239,29 +239,46 @@ These five were labelled Q11–Q15 when asked in chat, but Q11–Q18 already exi
 - **Q23/Q24:** one JSON path per SHA-256 and one marker match the carver/labeler pattern; separate directories would need two globs, two markers and a more complex importer without adding safety.
 - **Q25:** "separate part" means a report section, not a filesystem split — keeps the data layout simple and reproducible.
 
+## Review decisions — Q26–Q30 (yes to all)
+
+- **Q26 — guard fix:** in the family guard, treat `lbl_sts=verified` as family `AsyncRAT`, not as an empty family. Reason: `verified` rows carry no `sug_fam`, so the current guard lets XWorm join them.
+- **Q27 — rerun:** after the guard fix, rerun clusterer + importer and report cluster count, largest cluster, and mixed-family warnings.
+- **Q28 — cluster JSON:** add `is_dotnet` into `fields` of every cluster JSON (Q23 compliance).
+- **Q29 — importer strictness:** make `Data/Clusters/` mandatory — require `.done` and exactly 180 JSONs; no silent skip (Q24 compliance).
+- **Q30 — docs:** update the "Implementation complete" section after the rerun with real numbers.
+
+### Why
+
+- **Q26/Q27:** the 63-member cluster (47 verified + 7 XWorm + 9 unverified) survived because `verified` has no `sug_fam`; the guard must use `lbl_sts` too. Otherwise cluster IDs remain valid but the mixed-family warning is blind to the actual problem.
+- **Q28:** `is_dotnet` is the non-.NET partition tag required by Q23; without it the JSON is not self-describing.
+- **Q29:** a silent skip would leave `cluster_id` NULL and break Phase 0's checkpoint; strict failure matches every other importer check.
+- **Q30:** the current doc claims one mixed warning on a singleton, which the DB does not support; it must reflect the post-fix run.
+
 ---
 
-## Implementation complete (2026-11-27)
+## Implementation complete (2026-11-27, post Q26–Q30)
 
 ### Tools/Clustering/clusterer.py
 - File-based, no DB access. Reads samples by SHA-256 from `Samples/`.
 - Computes TLSH hash on raw file bytes (min 256 bytes; warns if smaller).
 - Reads config from `Data/Labels/<sha>.json`.
 - Clusters if TLSH distance <= 100 OR shared config key (mutex, key, or host).
+- Partition guards: never union .NET with non-.NET; never union samples with differing known families; bridge guard prevents merging components with differing families.
 - Transitive closure via Union-Find (connected components).
 - `cluster_id` = lexicographically smallest SHA-256 among members.
 - Singletons get `cluster_id = their own sha256`.
-- Family-consistency guard: logs warning to stderr on mixed-family clusters.
+- Family-consistency guard (Q26): treats `lbl_sts=verified` as family `AsyncRAT`. Logs warning on mixed-family clusters.
+- Cluster JSON fields (Q28): `cluster_id`, `is_dotnet`, `tlsh`, `config_keys`.
 - Writes `Data/Clusters/<sha256>.json` + `Data/Clusters/.done`.
 
-### Tools/Importer/importer.py (extended)
-- Reads cluster JSONs from `Data/Clusters/` (optional; skipped if absent).
-- Auto-ALTERs `DataSet.db` to add `cluster_id TEXT` column if absent.
+### Tools/Importer/importer.py (extended, Q29)
+- Reads cluster JSONs from `Data/Clusters/` (mandatory: requires `.done` and exactly 180 JSONs).
+- Auto-ALTERs `DataSet.db` to add `cluster_id TEXT` and `split TEXT` columns.
 - Sets `cluster_id` on each dataset row.
 - Verified: 180 rows, 0 NULL, 44 distinct clusters.
 
 ### Run results
 - 180 samples clustered into 44 clusters (13 multi-member).
-- 1 mixed-family warning: `10102a03f784` (quasarrat + venomrat).
+- 1 mixed-family warning: `053fa0de7562` (AsyncRAT + xworm).
 - Full pipeline (labeler → clusterer → 5 carvers → importer) completes successfully.
 - All synthetic tests pass (labeler, importer, downloader 12/12, live paths 6/6).

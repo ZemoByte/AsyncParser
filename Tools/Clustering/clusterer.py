@@ -102,7 +102,12 @@ def config_keys(config) -> frozenset:
 
 def family_of(sha: str, labels_root: Path) -> str:
     fields = load_label(sha, labels_root)
-    return str(fields.get("sug_fam") or "").strip()
+    sug = str(fields.get("sug_fam") or "").strip()
+    if sug:
+        return sug
+    if str(fields.get("lbl_sts") or "").strip() == "verified":
+        return "AsyncRAT"
+    return ""
 
 
 def is_dotnet_of(sha: str, labels_root: Path) -> bool:
@@ -233,6 +238,7 @@ def main() -> int:
             "producer": "clusterer",
             "fields": {
                 "cluster_id": cluster_id_map[sha],
+                "is_dotnet": bool(load_label(sha, labels_root).get("is_dotnet", True)),
                 "tlsh": hashes.get(sha),
                 "config_keys": config_dicts.get(sha, {}),
             },

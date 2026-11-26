@@ -167,32 +167,32 @@ def main() -> int:
                     raise RuntimeError(f"duplicate carved JSON for {sha256}/{tool}")
                 carved[sha256][tool] = payload["fields"]
 
-    # Read cluster assignments (optional)
+    # Read cluster assignments (mandatory)
     clusters: dict[str, str] = {}
     clusters_dir = DATA_DIR / "Clusters"
-    if clusters_dir.is_dir():
-        if not (clusters_dir / ".done").is_file():
-            raise RuntimeError(f"missing done marker: {clusters_dir / '.done'}")
-        json_files = sorted(clusters_dir.glob("*.json"))
-        if len(json_files) != len(samples):
-            raise RuntimeError(
-                f"expected {len(samples)} cluster JSONs, found {len(json_files)}"
-            )
-        for path in json_files:
-            payload = read_json(path)
-            sha256 = str(payload["sha256"])
-            if sha256 not in samples:
-                continue
-            clusters[sha256] = str(payload["fields"].get("cluster_id", ""))
+    if not (clusters_dir / ".done").is_file():
+        raise RuntimeError(f"missing done marker: {clusters_dir / '.done'}")
+    json_files = sorted(clusters_dir.glob("*.json"))
+    if len(json_files) != len(samples):
+        raise RuntimeError(
+            f"expected {len(samples)} cluster JSONs, found {len(json_files)}"
+        )
+    for path in json_files:
+        payload = read_json(path)
+        sha256 = str(payload["sha256"])
+        if sha256 not in samples:
+            raise RuntimeError(f"cluster JSON for unknown sample: {sha256}")
+        clusters[sha256] = str(payload["fields"].get("cluster_id", ""))
+    if len(clusters) != len(samples):
+        raise RuntimeError(f"cluster JSONs do not cover all {len(samples)} samples")
 
     dataset_columns: dict[str, str] = {
         "sha256": "TEXT", "lbl_sts": "TEXT", "sug_fam": "TEXT",
         "obf_lvl": "TEXT", "parser_version": "TEXT", "config": "TEXT",
         "target_class_db": "TEXT",
     }
-    if clusters:
-        dataset_columns["cluster_id"] = "TEXT"
-        dataset_columns["split"] = "TEXT"
+    dataset_columns["cluster_id"] = "TEXT"
+    dataset_columns["split"] = "TEXT"
     class_columns: dict[str, str] = {
         "sha256": "TEXT", "tag": "TEXT", "secondary_tag": "TEXT",
         "api_tags": "TEXT", "tag_rule": "TEXT", "file_type": "TEXT",
@@ -273,9 +273,8 @@ def main() -> int:
             row = {"sha256": sha256, "target_class_db": target_class}
             for key in ("lbl_sts", "sug_fam", "obf_lvl", "parser_version"):
                 row[safe_column(key)] = label.get(key, "")
-            if "cluster_id" in dataset_columns:
-                row["cluster_id"] = clusters.get(sha256, "")
-                row["split"] = None
+            row["cluster_id"] = clusters[sha256]
+            row["split"] = None
             config = label.get("config", None)
             row["config"] = json.dumps(config) if isinstance(config, (dict, list)) else config
             for key, value in label.items():
