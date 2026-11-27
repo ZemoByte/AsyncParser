@@ -4,7 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
+import io
+import itertools
 import json
 import os
 import signal
@@ -19,6 +22,7 @@ import zipfile
 from pathlib import Path
 
 import pyzipper
+import tlsh
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent.parent
@@ -312,6 +316,13 @@ def init_main_db(conn: sqlite3.Connection) -> None:
     for column in ("attempted_epoch", "signature", "file_size", "last_seen"):
         definition = "REAL" if column == "attempted_epoch" else "TEXT"
         ensure_column(conn, "downloads", column, definition)
+    conn.execute("""CREATE TABLE IF NOT EXISTS downloads_rejected (
+        sha256_hash TEXT,
+        api_tags TEXT,
+        tag_rule TEXT,
+        reason TEXT,
+        seen_at TEXT
+    )""")
     conn.commit()
 
 
@@ -614,12 +625,370 @@ def cleanup_temp() -> None:
                 path.unlink()
 
 
+def check_ledger(conn: sqlite3.Connection, dest_dir: Path, file_type: str) -> list[str]:
+    known = {row[0] for row in conn.execute("SELECT sha256_hash FROM downloads")}
+    on_disk = {path.stem for path in dest_dir.glob(f"*.{EXT_BY_TYPE[file_type]}")}
+    missing = sorted(on_disk - known)
+    if missing:
+        console("WARN", f"{len(missing)} files on disk have no ledger row")
+        for sha256 in missing:
+            console("WARN", f"  {sha256}")
+    else:
+        console("LEDGER", f"ok; files={len(on_disk)} rows={len(known)}")
+    return missing
+
+
+# ------------------------------------------------------------- export batch
+
+EXPORT_DIR = ROOT / "Data" / "Exports"
+EXPORT_MANIFEST = EXPORT_DIR / "mb_full_selection.json"
+EXPORT_URL = "https://mb-api.abuse.ch/v2/files/exports/{key}/full.csv.zip"
+EXPORT_MIN_BYTES = 50 * 1024 * 1024
+EXPORT_MAX_AGE = 3600.0
+EXPORT_SIGNATURE = "asyncrat"
+
+
+def normalize_field(value) -> str:
+    text = str(value or "").strip()
+    if len(text) >= 2 and text[0] == '"' and text[-1] == '"':
+        text = text[1:-1]
+    return text.strip()
+
+
+def ensure_export_archive(path: Path, auth_key: str) -> Path:
+    """Reuse a fresh archive; otherwise fetch it. The URL is never logged."""
+    if path.is_file():
+        age = time.time() - path.stat().st_mtime
+        if path.stat().st_size >= EXPORT_MIN_BYTES and age <= EXPORT_MAX_AGE:
+            console("EXPORT", f"reusing {path.name} "
+                    f"({path.stat().st_size / 2**20:.1f} MiB, {age / 60:.1f} min old)")
+            return path
+    ensure_dir(path.parent)
+    console("EXPORT", "downloading full export (URL hidden)")
+    part = path.with_suffix(path.suffix + ".part")
+    request = urllib.request.Request(
+        EXPORT_URL.format(key=auth_key),
+        headers={"User-Agent": "AsyncParser-MBDownloader/1.0"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=120) as response, \
+                open(part, "wb") as handle:
+            while True:
+                chunk = response.read(1 << 20)
+                if not chunk:
+                    break
+                handle.write(chunk)
+    except urllib.error.HTTPError as exc:
+        if part.exists():
+            part.unlink()
+        raise ApiError(f"export download failed: HTTP {exc.code}") from None
+    except (urllib.error.URLError, OSError) as exc:
+        if part.exists():
+            part.unlink()
+        raise ApiError(f"export download failed: {exc.__class__.__name__}") from None
+    if part.stat().st_size < EXPORT_MIN_BYTES:
+        size = part.stat().st_size
+        part.unlink()
+        raise ApiError(f"export download truncated at {size} bytes")
+    os.replace(part, path)
+    path.touch()
+    console("EXPORT", f"saved {path.name} ({path.stat().st_size / 2**20:.1f} MiB)")
+    return path
+
+
+def iter_export_rows(path: Path):
+    """Stream full.csv from the zip; never extract the CSV to disk."""
+    with zipfile.ZipFile(path) as archive:
+        member = next((name for name in archive.namelist()
+                       if name.endswith(".csv")), None)
+        if member is None:
+            raise RuntimeError(f"no CSV member in {path.name}")
+        with archive.open(member) as raw:
+            text = io.TextIOWrapper(raw, encoding="utf-8", errors="replace",
+                                    newline="")
+            header = None
+            first = None
+            for line in text:
+                if line.startswith("#"):
+                    if "first_seen_utc" in line:
+                        header = [normalize_field(item) for item in
+                                  line.lstrip("#").split(",")]
+                    continue
+                first = line
+                break
+            if header is None:
+                raise RuntimeError(f"no CSV header in {path.name}")
+            body = text if first is None else itertools.chain([first], text)
+            reader = csv.reader(body, skipinitialspace=True)
+            index = {name: position for position, name in enumerate(header)}
+            for missing in ("first_seen_utc", "sha256_hash", "file_name",
+                            "file_type_guess", "signature", "tlsh"):
+                if missing not in index:
+                    raise RuntimeError(f"export CSV missing column {missing}")
+            for row in reader:
+                if not row:
+                    continue
+                yield {name: normalize_field(row[position])
+                       for name, position in index.items() if position < len(row)}
+
+
+def parse_years(spec: str) -> list[int]:
+    years: list[int] = []
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "-" in part:
+            start, end = part.split("-", 1)
+            years.extend(range(int(start), int(end) + 1))
+        else:
+            years.append(int(part))
+    if not years:
+        raise ValueError(f"no years in {spec!r}")
+    return years
+
+
+def load_selection_manifest(path: Path) -> dict:
+    if not path.is_file():
+        return {"schema_version": 1, "source": "malwarebazaar_full_export",
+                "entries": [], "runs": []}
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload.get("entries"), list):
+        raise RuntimeError(f"selection manifest has no entries: {path}")
+    payload.setdefault("runs", [])
+    return payload
+
+
+def save_selection_manifest(path: Path, payload: dict) -> None:
+    ensure_dir(path.parent)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, indent=2, sort_keys=True),
+                         encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def export_candidates(path: Path, ledger: set[str], selected: set[str],
+                      years: list[int]) -> dict:
+    stats = {"rows": 0, "signature": 0, "exe": 0, "ledger": 0,
+             "manifest": 0, "tlsh_missing": 0}
+    by_year: dict[int, list[dict]] = {year: [] for year in years}
+    reasons: list[tuple[str, str]] = []
+    for row in iter_export_rows(path):
+        stats["rows"] += 1
+        if row.get("signature", "").lower() != EXPORT_SIGNATURE:
+            continue
+        stats["signature"] += 1
+        if row.get("file_type_guess", "").lower() != "exe":
+            continue
+        stats["exe"] += 1
+        sha256 = row.get("sha256_hash", "").lower()
+        if sha256 in ledger:
+            stats["ledger"] += 1
+            reasons.append((sha256, "ledger"))
+            continue
+        if sha256 in selected:
+            stats["manifest"] += 1
+            reasons.append((sha256, "manifest"))
+            continue
+        first_seen = row.get("first_seen_utc", "")
+        year = int(first_seen[:4]) if first_seen[:4].isdigit() else 0
+        if year not in by_year:
+            continue
+        try:
+            digest = tlsh.Tlsh()
+            digest.fromTlshStr(row.get("tlsh", ""))
+            tlsh_value = digest.hexdigest()
+        except ValueError:
+            stats["tlsh_missing"] += 1
+            reasons.append((sha256, "tlsh_missing"))
+            continue
+        by_year[year].append({
+            "sha256": sha256, "year": year, "first_seen": first_seen,
+            "tlsh": tlsh_value, "file_name": row.get("file_name", ""),
+        })
+    for items in by_year.values():
+        items.sort(key=lambda item: (item["first_seen"], item["sha256"]))
+    return {"stats": stats, "by_year": by_year, "reasons": reasons}
+
+
+def select_export_batch(by_year: dict[int, list[dict]], anchors: list[str],
+                        per_year: int, threshold: int, limit: int) -> dict:
+    selected: list[dict] = []
+    rejected: list[tuple[str, str]] = []
+    pool = list(anchors)
+    per_year_counts: dict[int, int] = {}
+    for year in sorted(by_year):
+        count = 0
+        per_year_counts[year] = 0
+        ordered = sorted(by_year[year],
+                         key=lambda item: (item["first_seen"], item["sha256"]))
+        for candidate in ordered:
+            if count >= per_year:
+                break
+            if limit and len(selected) >= limit:
+                break
+            if any(tlsh.diff(candidate["tlsh"], anchor) <= threshold
+                   for anchor in pool):
+                rejected.append((candidate["sha256"], "tlsh_reject"))
+                continue
+            selected.append(candidate)
+            pool.append(candidate["tlsh"])
+            count += 1
+            per_year_counts[year] += 1
+        if limit and len(selected) >= limit:
+            break
+    return {"selected": selected, "rejected": rejected,
+            "per_year": per_year_counts}
+
+
+def record_rejection(conn: sqlite3.Connection, sha256: str, reason: str,
+                     rule: str, detail: str = "") -> None:
+    conn.execute(
+        "INSERT INTO downloads_rejected (sha256_hash, api_tags, tag_rule, reason, seen_at) "
+        "SELECT ?, ?, ?, ?, ? WHERE NOT EXISTS ("
+        "SELECT 1 FROM downloads_rejected WHERE sha256_hash = ? "
+        "AND reason = ? AND tag_rule = ?)",
+        (sha256, detail, rule, reason, utc_now(), sha256, reason, rule),
+    )
+
+
+def run_export_batch(auth_key: str, export_path: Path, batch: int,
+                     per_year: int, years: list[int], threshold: int,
+                     limit: int, rate: int,
+                     main_conn: sqlite3.Connection) -> dict:
+    rule = f"asyncrat_full_export_b{batch}"
+    archive = ensure_export_archive(export_path, auth_key)
+    manifest = load_selection_manifest(EXPORT_MANIFEST)
+    ledger = {row[0] for row in main_conn.execute(
+        "SELECT sha256_hash FROM downloads")}
+    selected_before = {entry["sha256"] for entry in manifest["entries"]}
+    anchors = [entry["tlsh"] for entry in manifest["entries"] if entry.get("tlsh")]
+
+    scan = export_candidates(archive, ledger, selected_before, years)
+    stats = scan["stats"]
+    resume = [entry for entry in manifest["entries"]
+              if entry.get("batch") == batch and entry.get("status") == "selected"]
+    remaining = max(0, limit - len(resume)) if limit else 0
+    if remaining > 0 or not resume:
+        chosen = select_export_batch(scan["by_year"], anchors, per_year,
+                                     threshold, remaining)
+    else:
+        chosen = {"selected": [], "rejected": [], "per_year": {}}
+    console("SELECT", f"rows={stats['rows']} signature={stats['signature']} "
+            f"exe={stats['exe']} ledger={stats['ledger']} "
+            f"manifest={stats['manifest']} tlsh_missing={stats['tlsh_missing']} "
+            f"tlsh_reject={len(chosen['rejected'])} "
+            f"selected={len(chosen['selected'])} resume={len(resume)}")
+
+    record_rejection(main_conn, "", "signature_filter", rule,
+                     f"count={stats['rows'] - stats['signature']}")
+    record_rejection(main_conn, "", "file_type", rule,
+                     f"count={stats['signature'] - stats['exe']}")
+    for sha256, reason in scan["reasons"] + chosen["rejected"]:
+        record_rejection(main_conn, sha256, reason, rule)
+    main_conn.commit()
+
+    now = utc_now()
+    new_entries = [{**item, "batch": batch, "status": "selected",
+                    "selected_at": now} for item in chosen["selected"]]
+    entries = resume + new_entries
+    manifest["entries"].extend(new_entries)
+    if chosen["selected"]:
+        manifest["runs"].append({
+            "batch": batch, "selected_at": now, "years": years,
+            "per_year": per_year, "tlsh_threshold": threshold, "limit": limit,
+            "counts": {**stats, "tlsh_reject": len(chosen["rejected"]),
+                       "selected": len(chosen["selected"])},
+            "per_year_selected": {str(key): value
+                                  for key, value in chosen["per_year"].items()},
+        })
+    save_selection_manifest(EXPORT_MANIFEST, manifest)
+
+    ensure_dir(TEMP_DIR)
+    if COMPARISON_DB.exists():
+        COMPARISON_DB.unlink()
+    temp_conn = sqlite3.connect(COMPARISON_DB)
+    init_temp_db(temp_conn)
+    downloaded = failed = adopted = 0
+    state = {"consecutive_429": 0}
+    last_download = None
+    try:
+        for index, entry in enumerate(entries, 1):
+            if STOP["requested"]:
+                raise StopRun("Ctrl+C")
+            if attempts_in_last_24h(main_conn) >= DAILY_CAP:
+                raise StopRun(f"daily cap of {DAILY_CAP} downloads reached")
+            sha256 = entry["sha256"]
+            item = {"file_name": entry["file_name"], "signature": "AsyncRAT"}
+            outcome = handle_existing_file(main_conn, temp_conn, sha256, "exe",
+                                           ASYNCRAT_DIR, "AsyncRAT", "", False,
+                                           rule, entry["first_seen"], item)
+            if outcome == "adopted":
+                entry["status"] = "downloaded"
+                adopted += 1
+                save_selection_manifest(EXPORT_MANIFEST, manifest)
+                continue
+            wait_seconds = 60.0 / rate
+            if last_download is not None:
+                pause = max(0.0, wait_seconds - (time.monotonic() - last_download))
+                if pause > 0:
+                    console("WAIT", f"{pause:.1f}s")
+                interruptible_sleep(pause)
+            console("GET", f"{index}/{len(entries)} {sha256[:12]}... "
+                    f"year={entry['year']}")
+            try:
+                local_name = download_sample(auth_key, sha256, "exe",
+                                             ASYNCRAT_DIR, state)
+                upsert_download(main_conn, {
+                    "sha256_hash": sha256,
+                    "api_file_name": text_field(item.get("file_name")),
+                    "local_filename": local_name,
+                    "tag": "AsyncRAT",
+                    "secondary_tag": "",
+                    "wildcard_extra": 0,
+                    "api_tags": "",
+                    "tag_rule": rule,
+                    "file_type": "exe",
+                    "first_seen": entry["first_seen"],
+                    "downloaded_at": utc_now(),
+                    "downloaded_epoch": time.time(),
+                    "attempted_epoch": time.time(),
+                    "signature": "AsyncRAT",
+                    "last_seen": "",
+                    "status": "success",
+                })
+                entry["status"] = "downloaded"
+                downloaded += 1
+            except (ApiError, OSError, ValueError, sqlite3.Error,
+                    zipfile.BadZipFile, RuntimeError) as exc:
+                entry["status"] = "failed"
+                failed += 1
+                record_rejection(main_conn, sha256, "download_failed", rule,
+                                 str(exc)[:200])
+                console("ERROR", f"{sha256[:12]}... {exc}")
+                main_conn.commit()
+            last_download = time.monotonic()
+            save_selection_manifest(EXPORT_MANIFEST, manifest)
+    finally:
+        temp_conn.close()
+        cleanup_temp()
+
+    missing = check_ledger(main_conn, ASYNCRAT_DIR, "exe")
+    if missing:
+        raise RuntimeError(f"{len(missing)} export files have no ledger row")
+    console("EXPORT", f"batch={batch} downloaded={downloaded} adopted={adopted} "
+            f"failed={failed} selected={len(entries)}")
+    return {"stats": stats, "selected": len(entries), "downloaded": downloaded,
+            "adopted": adopted, "failed": failed}
+
+
+
 # ------------------------------------------------------------------ run loop
 
 def run_poll_loop(auth_key: str, tag: str, dest_dir: Path, file_types: list,
                   rate: int, main_conn: sqlite3.Connection,
                   secondary_tag: str = "", wildcard_extra: bool = False,
-                  tag_mode: str = "exact") -> None:
+                  tag_mode: str = "exact", limit: int = 0) -> None:
     ensure_dir(TEMP_DIR)
     if COMPARISON_DB.exists():
         COMPARISON_DB.unlink()
@@ -688,6 +1057,13 @@ def run_poll_loop(auth_key: str, tag: str, dest_dir: Path, file_types: list,
                                 reason, secondary_tag=secondary_tag,
                                 wildcard_extra=wildcard_extra,
                                 api_tags=tags_csv, tag_rule=rule)
+                    main_conn.execute(
+                        "INSERT INTO downloads_rejected "
+                        "(sha256_hash, api_tags, tag_rule, reason, seen_at) "
+                        "VALUES (?, ?, ?, ?, ?)",
+                        (sha256, tags_csv, rule, reason, utc_now()),
+                    )
+                main_conn.commit()
                 console("FILTER", f"rows={result['rows']} drop={result['rejected']} "
                         f"dup={result['duplicates']} bad_type={len(result['skipped'])} "
                         f"new={len(result['new'])} backlog={len(result['backlog'])}")
@@ -698,6 +1074,9 @@ def run_poll_loop(auth_key: str, tag: str, dest_dir: Path, file_types: list,
                         raise StopRun("Ctrl+C")
                     if attempts_in_last_24h(main_conn) >= DAILY_CAP:
                         raise StopRun(f"daily cap of {DAILY_CAP} downloads reached")
+                    if limit and (session_downloads + session_adopted
+                                  + session_quarantined) >= limit:
+                        raise StopRun(f"batch limit {limit} reached")
 
                     item = metadata_by_sha.get(sha256, {})
                     outcome = handle_existing_file(main_conn, temp_conn, sha256, file_type,
@@ -820,6 +1199,16 @@ def main() -> None:
     parser.add_argument("--tag-mode", choices=("exact", "contains"),
                         default="exact")
     parser.add_argument("--migrate-signature", action="store_true")
+    parser.add_argument("--batch", nargs="?", const=0, type=int, default=None,
+                        help="tag batch when bare; export batch number with --from-export")
+    parser.add_argument("--from-export", type=Path, default=None)
+    parser.add_argument("--per-year", type=int, default=50)
+    parser.add_argument("--years", default="2020-2026")
+    parser.add_argument("--tlsh-threshold", type=int, default=100)
+    parser.add_argument("--tag", default=None)
+    parser.add_argument("--file-type", choices=sorted(EXT_BY_TYPE), default="exe")
+    parser.add_argument("--limit", type=int, default=0)
+    parser.add_argument("--rate", type=int, default=10)
     args = parser.parse_args()
 
     if args.migrate_signature:
@@ -841,6 +1230,41 @@ def main() -> None:
         ensure_dir(directory)
     main_conn = sqlite3.connect(DB_PATH)
     init_main_db(main_conn)
+
+    if args.from_export is not None:
+        if not args.batch:
+            parser.error("--from-export requires --batch <number>")
+        STOP["in_run"] = True
+        try:
+            run_export_batch(auth_key, args.from_export, args.batch,
+                             args.per_year, parse_years(args.years),
+                             args.tlsh_threshold, args.limit, args.rate,
+                             main_conn)
+        except StopRun as exc:
+            console("BATCH", str(exc))
+        finally:
+            STOP["in_run"] = False
+            main_conn.close()
+        return
+
+    if args.batch is not None:
+        if not args.tag:
+            parser.error("--batch requires --tag")
+        backfill_signature(main_conn)
+        dest_dir = ASYNCRAT_DIR if args.tag.lower() == "asyncrat" else OTHER_DIR
+        try:
+            run_poll_loop(
+                auth_key, args.tag, dest_dir, [args.file_type], args.rate,
+                main_conn, tag_mode=args.tag_mode, limit=args.limit,
+            )
+        except StopRun as exc:
+            console("BATCH", str(exc))
+        finally:
+            missing = check_ledger(main_conn, dest_dir, args.file_type)
+            main_conn.close()
+            if missing:
+                raise RuntimeError(f"{len(missing)} files on disk have no ledger row")
+        return
 
     try:
         while True:

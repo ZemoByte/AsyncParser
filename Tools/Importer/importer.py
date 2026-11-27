@@ -465,6 +465,9 @@ def main() -> int:
         existing_temporal = dict(
             conn_dataset.execute("SELECT sha256, split_temporal FROM dataset")
         )
+        target_shas: dict[str, set[str]] = {
+            "AsyncRAT.db": set(), "OtherMalwares.db": set(), "Benign.db": set(),
+        }
         ensure_evidence_table(conn_dataset)
         for sha256, sample in samples.items():
             if sample["status"] not in {"success", "adopted"}:
@@ -479,6 +482,8 @@ def main() -> int:
             # Gold rows stay in DataSet.db only; they must never reach a class
             # DB or a training split.
             target_class = target_class_for_row(label, is_gold)
+            if target_class is not None:
+                target_shas[target_class].add(sha256)
             row = {"sha256": sha256, "target_class_db": target_class}
             for key in ("lbl_sts", "sug_fam", "obf_lvl", "parser_version"):
                 row[safe_column(key)] = label.get(key, "")
@@ -543,6 +548,30 @@ def main() -> int:
                 conn_class.commit()
             finally:
                 conn_class.close()
+        # Remove rows that are no longer active (for example retired DLLs).
+        active_shas = set(samples)
+        for (sha256,) in list(conn_dataset.execute("SELECT sha256 FROM dataset")):
+            if sha256 not in active_shas:
+                conn_dataset.execute("DELETE FROM dataset WHERE sha256 = ?", (sha256,))
+        for class_name, allowed in target_shas.items():
+            class_path = DATA_DIR / class_name
+            if not class_path.is_file():
+                continue
+            conn_class = sqlite3.connect(class_path)
+            try:
+                exists = conn_class.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='samples'"
+                ).fetchone()
+                if exists:
+                    existing = {row[0] for row in conn_class.execute(
+                        "SELECT sha256 FROM samples")}
+                    for sha256 in existing - allowed:
+                        conn_class.execute(
+                            "DELETE FROM samples WHERE sha256 = ?", (sha256,)
+                        )
+                    conn_class.commit()
+            finally:
+                conn_class.close()
         # Only human-labelled gold rows must stay out of the class DBs.  Blank
         # gold_status means the row is still a candidate, not a gold row.
         gold_shas = sorted(
@@ -569,6 +598,17 @@ def main() -> int:
                 finally:
                     conn_class.close()
         upsert_evidence(conn_dataset, evidence_rows)
+        current_keys = {
+            (row["sha256"], row["source"], row["source_version"])
+            for row in evidence_rows
+        }
+        for row in list(conn_dataset.execute(
+                "SELECT sha256, source, source_version FROM label_evidence")):
+            if tuple(row) not in current_keys:
+                conn_dataset.execute(
+                    "DELETE FROM label_evidence WHERE sha256=? AND source=? "
+                    "AND source_version=?", row,
+                )
         conn_dataset.commit()
     finally:
         conn_dataset.close()

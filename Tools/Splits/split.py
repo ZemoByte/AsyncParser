@@ -11,13 +11,11 @@ import argparse
 import csv
 import json
 import os
-import random
 import sqlite3
 import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
-from sklearn.model_selection import GroupShuffleSplit
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent.parent
@@ -79,14 +77,23 @@ def read_rows(data_root: Path) -> tuple[list[dict], int]:
     ledger = ledger_dates(data_root)
     rows = []
     missing_date = 0
+    missing_labels = 0
     for sha, status, cluster_id, first_seen, is_gold in raw:
         if is_gold:
             continue
         if status in {"verified", "verified_other"}:
             sample_class = "positive"
         elif status == "benign":
-            fields = load_final_label(sha, data_root)
-            if fields.get("origin") == "fixture" or fields.get("kind") != "exe":
+            try:
+                fields = load_final_label(sha, data_root)
+            except RuntimeError:
+                if not list((data_root.parent / "Samples" / "Benign").glob(f"{sha}.*")):
+                    missing_labels += 1
+                    continue
+                raise
+            if fields.get("source") == "clrheader2023" \
+                    or fields.get("origin") in {"fixture", "clrheader2023"} \
+                    or fields.get("kind") != "exe":
                 continue
             sample_class = "negative"
         else:
@@ -97,64 +104,34 @@ def read_rows(data_root: Path) -> tuple[list[dict], int]:
             missing_date += 1
         rows.append({"sha256": sha, "label": sample_class,
                      "cluster_id": cluster_id, "first_seen": seen})
+    if missing_labels:
+        print(f"WARNING: skipped {missing_labels} rows with missing labels "
+              f"and no sample file (retired artifacts)")
     return rows, missing_date
 
 
-def _manual_cluster_split(rows: list[dict], seed: int) -> dict[str, str]:
-    clusters = sorted({row["cluster_id"] for row in rows})
-    rng = random.Random(seed)
-    rng.shuffle(clusters)
-    n = len(clusters)
-    n_train = max(1, int(round(n * 0.70))) if n else 0
-    n_val = max(1, int(round(n * 0.15))) if n >= 3 else 0
-    if n >= 3 and n - n_train - n_val < 1:
-        n_train = max(1, n - n_val - 1)
-    assignment = {}
-    for index, cluster_id in enumerate(clusters):
-        if index < n_train:
-            split = "train"
-        elif index < n_train + n_val:
-            split = "val"
-        else:
-            split = "test"
+def pack_clusters(cluster_sizes: dict[str, int]) -> dict[str, str]:
+    """Greedy whole-cluster packing to 70/15/15 of rows, deterministic."""
+    total = sum(cluster_sizes.values())
+    fractions = {"train": 0.70, "val": 0.15, "test": 0.15}
+    targets = {split: total * share for split, share in fractions.items()}
+    assigned = {"train": 0, "val": 0, "test": 0}
+    assignment: dict[str, str] = {}
+    for cluster_id, size in sorted(cluster_sizes.items(),
+                                   key=lambda item: (-item[1], item[0])):
+        split = min(("train", "val", "test"),
+                    key=lambda name: (assigned[name] - targets[name], name))
         assignment[cluster_id] = split
+        assigned[split] += size
     return assignment
 
 
-def split_class_clusters(rows: list[dict], seed: int) -> dict[str, str]:
-    groups = [row["cluster_id"] for row in rows]
-    if len(set(groups)) >= 3:
-        try:
-            gss = GroupShuffleSplit(n_splits=1, train_size=0.70,
-                                    test_size=0.30, random_state=seed)
-            train_idx, temp_idx = next(gss.split(rows, groups=groups))
-            temp_rows = [rows[index] for index in temp_idx]
-            temp_groups = [row["cluster_id"] for row in temp_rows]
-            if len(set(temp_groups)) >= 2:
-                gss2 = GroupShuffleSplit(n_splits=1, train_size=0.50,
-                                         test_size=0.50, random_state=seed)
-                val_idx, test_idx = next(gss2.split(temp_rows, groups=temp_groups))
-                assignment = {}
-                for index in train_idx:
-                    assignment[rows[index]["sha256"]] = "train"
-                for index in val_idx:
-                    assignment[temp_rows[index]["sha256"]] = "val"
-                for index in test_idx:
-                    assignment[temp_rows[index]["sha256"]] = "test"
-                by_cluster: dict[str, str] = {}
-                for row in rows:
-                    by_cluster[row["cluster_id"]] = assignment[row["sha256"]]
-                return by_cluster
-        except ValueError:
-            pass
-    return _manual_cluster_split(rows, seed)
-
-
-def cluster_split(rows: list[dict], seed: int) -> dict[str, str]:
+def cluster_split(rows: list[dict]) -> dict[str, str]:
     result = {}
     for sample_class in ("positive", "negative"):
         class_rows = [row for row in rows if row["label"] == sample_class]
-        by_cluster = split_class_clusters(class_rows, seed)
+        sizes = Counter(row["cluster_id"] for row in class_rows)
+        by_cluster = pack_clusters(dict(sizes))
         for row in class_rows:
             result[row["sha256"]] = by_cluster[row["cluster_id"]]
     return result
@@ -181,32 +158,38 @@ def temporal_split(rows: list[dict]) -> dict[str, str]:
     return result
 
 
-def split_stats(rows: list[dict], assignment: dict[str, str]) -> dict:
+def split_stats(rows: list[dict], assignment: dict[str, str],
+                class_cluster_totals: dict[str, int]) -> dict:
     stats = {}
     for split in ("train", "val", "test"):
         selected = [row for row in rows if assignment.get(row["sha256"]) == split]
         positives = sum(1 for row in selected if row["label"] == "positive")
-        clusters = len({row["cluster_id"] for row in selected})
-        per_class = Counter(row["label"] for row in selected)
-        class_clusters = {
-            sample_class: len({
-                row["cluster_id"] for row in selected
-                if row["label"] == sample_class
-            })
-            for sample_class in ("positive", "negative")
-        }
-        degenerate = (
-            positives == 0
-            or any(count < 2 for count in class_clusters.values())
-        )
+        negatives = sum(1 for row in selected if row["label"] == "negative")
+        positive_clusters = Counter(row["cluster_id"] for row in selected
+                                    if row["label"] == "positive")
+        negative_clusters = Counter(row["cluster_id"] for row in selected
+                                    if row["label"] == "negative")
+        largest_positive = max(positive_clusters.values(), default=0)
+        largest_positive_share = (largest_positive / positives) if positives else 0.0
+        degenerate = (positive_clusters.total() < 2
+                      or largest_positive_share > 0.40)
         stats[split] = {
             "rows": len(selected),
             "positives": positives,
-            "clusters": clusters,
-            "per_class": dict(per_class),
-            "clusters_per_class": class_clusters,
+            "negatives": negatives,
+            "positive_clusters": len(positive_clusters),
+            "negative_clusters": len(negative_clusters),
+            "clusters": len({row["cluster_id"] for row in selected}),
+            "per_class": {"positive": positives, "negative": negatives},
+            "clusters_per_class": {"positive": len(positive_clusters),
+                                   "negative": len(negative_clusters)},
+            "largest_positive_share": largest_positive_share,
             "degenerate": degenerate,
         }
+    for sample_class, total in class_cluster_totals.items():
+        if total < 10:
+            for item in stats.values():
+                item["degenerate"] = True
     return stats
 
 
@@ -230,15 +213,20 @@ def main() -> int:
     if not rows:
         raise RuntimeError("no primary rows found")
 
-    cluster_assign = cluster_split(rows, args.seed)
+    cluster_assign = cluster_split(rows)
     temporal_assign = temporal_split(rows)
     spans = cluster_spans(rows, cluster_assign)
     if spans:
         raise RuntimeError(f"{spans} clusters span cluster splits; refusing")
     temporal_spans = cluster_spans(rows, temporal_assign)
 
-    cluster_stats = split_stats(rows, cluster_assign)
-    temporal_stats = split_stats(rows, temporal_assign)
+    class_cluster_totals = {
+        sample_class: len({row["cluster_id"] for row in rows
+                           if row["label"] == sample_class})
+        for sample_class in ("positive", "negative")
+    }
+    cluster_stats = split_stats(rows, cluster_assign, class_cluster_totals)
+    temporal_stats = split_stats(rows, temporal_assign, class_cluster_totals)
     degenerate = any(item["degenerate"] for item in cluster_stats.values()) \
         or any(item["degenerate"] for item in temporal_stats.values())
 
@@ -270,8 +258,10 @@ def main() -> int:
         for split in ("train", "val", "test"):
             item = stats[split]
             print(f"{split}: rows={item['rows']} positives={item['positives']} "
-                  f"clusters={item['clusters']} per_class={item['per_class']} "
-                  f"clusters_per_class={item['clusters_per_class']} "
+                  f"negatives={item['negatives']} "
+                  f"positive_clusters={item['positive_clusters']} "
+                  f"negative_clusters={item['negative_clusters']} "
+                  f"largest_positive_share={item['largest_positive_share']:.3f} "
                   f"degenerate={item['degenerate']}")
     return 0
 

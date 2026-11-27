@@ -380,7 +380,8 @@ def source_archives(source: str, staging: Path, timeout: int) -> list[tuple[Path
 def main() -> int:
     parser = argparse.ArgumentParser(description="Collect benign .NET PE files")
     parser.add_argument("--source", required=True,
-                        choices=("dotnet-sdk", "nuget", "chocolatey", "github", "dike"))
+                        choices=("dotnet-sdk", "nuget", "chocolatey", "github",
+                                 "dike", "clrheader2023"))
     parser.add_argument("--kind", choices=("exe", "dll", "any"), default="exe")
     parser.add_argument("--min-size", type=int, default=100_000)
     parser.add_argument("--limit", type=int, default=0)
@@ -392,6 +393,8 @@ def main() -> int:
                         help="DikeDataset root; only files/benign is read")
     parser.add_argument("--github-dir", type=Path, default=None,
                         help="local GitHub dataset directory (origin=github)")
+    parser.add_argument("--clrheader-dir", type=Path, default=None,
+                        help="Hassan 2023 CLR-header repository root")
     parser.add_argument("--timeout", type=int, default=180)
     args = parser.parse_args()
 
@@ -419,6 +422,17 @@ def main() -> int:
         candidates = iter_dir_candidates(
             github_dir, "github", str(github_dir), "dataset-license", "github",
             args.kind, args.min_size, stats)
+        total_entries = len(candidates)
+    elif args.source == "clrheader2023":
+        if args.clrheader_dir is None:
+            raise RuntimeError("--source clrheader2023 requires --clrheader-dir")
+        benign_dir = args.clrheader_dir.resolve() / "Benign" / "Benign exe"
+        if not benign_dir.is_dir():
+            raise RuntimeError(f"no Hassan benign folder under {args.clrheader_dir}")
+        candidates = iter_dir_candidates(
+            benign_dir, "clrheader2023", str(benign_dir),
+            "research use only; cite Hassan et al. 2023; do not redistribute",
+            "github", args.kind, args.min_size, stats)
         total_entries = len(candidates)
     else:
         candidates = []

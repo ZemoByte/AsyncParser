@@ -59,5 +59,22 @@ class BenignOnlyTests(unittest.TestCase):
                     self.assertEqual(after[path], data)
 
 
+class ProvenanceTests(unittest.TestCase):
+    def test_manifest_entry_is_used(self):
+        entry = {"source": "clrheader2023", "origin": "github", "ext": ".exe"}
+        self.assertEqual(labeler.benign_provenance(entry, Path("x.exe")),
+                         {"source": "clrheader2023", "origin": "github",
+                          "kind": "exe"})
+
+    def test_missing_entry_defaults_to_unknown(self):
+        self.assertEqual(labeler.benign_provenance({}, Path("x.dll")),
+                         {"source": "unknown", "origin": "unknown",
+                          "kind": "dll"})
+
+    def test_extension_falls_back_to_path(self):
+        self.assertEqual(labeler.benign_provenance({"source": "dike"}, Path("y.bin")),
+                         {"source": "dike", "origin": "unknown", "kind": "other"})
+
+
 if __name__ == "__main__":
     unittest.main()

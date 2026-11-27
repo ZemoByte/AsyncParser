@@ -35,6 +35,13 @@ DEFAULT_FEATURES = ROOT / "Data" / "Features"
 DEFAULT_DATA = ROOT / "Data"
 SEED = 42
 
+from Tools._label_common import load_final_label  # noqa: E402
+from Tools.Features.build_matrix import (  # noqa: E402
+    STRUCTURAL_FEATURES,
+    load_carved,
+    load_structure,
+)
+
 
 def load_split(path: Path) -> dict:
     data = np.load(path, allow_pickle=False)
@@ -198,6 +205,148 @@ def run_loco(train: dict) -> dict:
     return result
 
 
+def holdout_shas(data_root: Path) -> list[str]:
+    conn = sqlite3.connect(f"file:{data_root / 'DataSet.db'}?mode=ro", uri=True)
+    try:
+        shas = [row[0] for row in conn.execute(
+            "SELECT sha256 FROM dataset WHERE lbl_sts = 'benign'"
+        )]
+    finally:
+        conn.close()
+    return [sha for sha in shas
+            if str(load_final_label(sha, data_root).get("source")) == "clrheader2023"]
+
+
+def evaluate_holdout(model, data_root: Path, vocab: list[str]) -> dict:
+    shas = holdout_shas(data_root)
+    if not shas:
+        return {"rows": 0, "predicted_positive": 0, "fpr": None}
+    carved, _ = load_carved(data_root)
+    structure = load_structure(data_root)
+    vocab_index = {item: index for index, item in enumerate(vocab)}
+    rows, cols = [], []
+    dense = []
+    for row_index, sha in enumerate(shas):
+        for values in carved.get(sha, {}).values():
+            for item in values:
+                column = vocab_index.get(item)
+                if column is not None:
+                    rows.append(row_index)
+                    cols.append(column)
+        fields = structure.get(sha)
+        if fields is None:
+            raise RuntimeError(f"missing structure JSON for holdout sample {sha}")
+        dense.append([
+            float(fields.get(name.replace("structure_", "", 1), 0.0) or 0.0)
+            for name in STRUCTURAL_FEATURES
+        ])
+    presence = csr_matrix(
+        (np.ones(len(rows), dtype=np.int8), (rows, cols)),
+        shape=(len(shas), len(vocab)),
+    )
+    X = hstack([presence, csr_matrix(np.asarray(dense, dtype=np.float32))],
+               format="csr")
+    predictions = model.predict(X)
+    positive = int(np.sum(predictions == 1))
+    return {"rows": len(shas), "predicted_positive": positive,
+            "fpr": positive / len(shas) if shas else None}
+
+
+def tlsh_map(data_root: Path) -> dict[str, str]:
+    hashes: dict[str, str] = {}
+    for path in (data_root / "Clusters").glob("*.json"):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        value = payload.get("fields", {}).get("tlsh")
+        if value:
+            hashes[payload["sha256"]] = value
+    return hashes
+
+
+def cluster_diagnostics(train: dict, test: dict, predictions,
+                        data_root: Path) -> list[dict]:
+    """Per test cluster: recall and nearest train cluster by TLSH."""
+    hashes = tlsh_map(data_root)
+    train_hashes = [(sha, int(label), str(group)) for sha, label, group
+                    in zip(train["sha256"], train["y"], train["groups"])
+                    if int(label) == 1]
+    by_cluster: dict[str, list[int]] = {}
+    for index, (label, group) in enumerate(zip(test["y"], test["groups"])):
+        by_cluster.setdefault(str(group), []).append(index)
+    diagnostics = []
+    for cluster, indices in sorted(by_cluster.items()):
+        labels = {int(test["y"][index]) for index in indices}
+        recall = float(np.mean([predictions[index] == 1 for index in indices]))
+        best_distance = None
+        best_cluster = ""
+        for index in indices:
+            target = hashes.get(str(test["sha256"][index]))
+            if not target:
+                continue
+            for sha, _label, train_cluster in train_hashes:
+                candidate = hashes.get(sha)
+                if not candidate:
+                    continue
+                try:
+                    distance = tlsh.diff(target, candidate)
+                except Exception:
+                    continue
+                if best_distance is None or distance < best_distance:
+                    best_distance = distance
+                    best_cluster = train_cluster
+        diagnostics.append({
+            "cluster_id": cluster,
+            "rows": len(indices),
+            "labels": sorted(labels),
+            "recall": recall if 1 in labels else None,
+            "nearest_train_cluster": best_cluster,
+            "nearest_train_tlsh_distance": best_distance,
+            "leakage": best_distance is not None and best_distance <= 100,
+        })
+    return diagnostics
+
+
+def validity_report(train: dict, test: dict, results: list[dict],
+                    loco: dict, data_root: Path) -> dict:
+    test_positives = int(np.sum(test["y"] == 1))
+    test_clusters = {str(group) for group, label
+                     in zip(test["groups"], test["y"]) if int(label) == 1}
+    f1 = {item["name"]: item["metrics"]["f1"] for item in results}
+    full_f1 = f1.get("lightgbm_full", f1.get("hist_gradient_fallback"))
+    structural_f1 = f1.get("lightgbm_structural_only")
+    structural_confound = (full_f1 is not None and structural_f1 is not None
+                           and structural_f1 >= full_f1 - 0.02)
+    marker = data_root / "Splits" / ".done"
+    split_degenerate = False
+    if marker.is_file():
+        split_degenerate = bool(json.loads(
+            marker.read_text(encoding="utf-8")).get("degenerate"))
+    positive_clusters = len({
+        group for group, label in zip(train["groups"], train["y"]) if label == 1
+    })
+    loco_inspect = bool(loco.get("triggered")
+                        and loco.get("f1") == 1.0
+                        and positive_clusters < 10)
+    reasons = []
+    if test_positives < 20:
+        reasons.append(f"test_positives={test_positives} < 20")
+    if len(test_clusters) < 5:
+        reasons.append(f"test_positive_clusters={len(test_clusters)} < 5")
+    if structural_confound:
+        reasons.append("structural confound: structural-only F1 is within 0.02")
+    if loco_inspect:
+        reasons.append("LOCO F1=1.0 with fewer than 10 positive clusters")
+    return {
+        "test_positives": test_positives,
+        "test_positive_clusters": len(test_clusters),
+        "structural_confound": structural_confound,
+        "loco_inspect": loco_inspect,
+        "split_degenerate": split_degenerate,
+        "train_positive_clusters": positive_clusters,
+        "not_a_result": bool(reasons),
+        "reasons": reasons,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Stage 1 baselines")
     parser.add_argument("--features", type=Path, default=DEFAULT_FEATURES)
@@ -209,8 +358,6 @@ def main() -> int:
     val = load_split(args.features / "val.npz")
     test = load_split(args.features / "test.npz")
     gate_ok = gate_status(args.data_root)
-    header = "DIAGNOSTIC ONLY — dataset gate failed; not a result" \
-        if not gate_ok else "Stage 1 result"
 
     results = []
     majority = Counter(train["y"]).most_common(1)[0][0]
@@ -236,12 +383,16 @@ def main() -> int:
     results[-1]["metrics"]["ci"] = bootstrap_ci(
         test["y"], pred, score, test["groups"])
 
+    full_model = None
+    full_predictions = None
     if HAS_LIGHTGBM:
         model = lgb.LGBMClassifier(
             n_estimators=200, learning_rate=0.05, num_leaves=31,
             random_state=args.seed, n_jobs=4, verbosity=-1,
         )
         results.append(run_model("lightgbm_full", model, train, test))
+        full_model = model
+        full_predictions = model.predict(test["X"])
         capability = lgb.LGBMClassifier(
             n_estimators=200, learning_rate=0.05, num_leaves=31,
             random_state=args.seed, n_jobs=4, verbosity=-1,
@@ -261,12 +412,31 @@ def main() -> int:
     else:
         model = HistGradientBoostingClassifier(random_state=args.seed)
         results.append(run_model("hist_gradient_fallback", model, train, test))
+        full_model = model
+        full_predictions = model.predict(test["X"])
 
     train_clusters = len(set(train["groups"]))
-    loco = (run_loco(train) if train_clusters < 10
-            else {"triggered": False, "train_clusters": train_clusters})
+    positive_clusters = len({
+        group for group, label in zip(train["groups"], train["y"]) if label == 1
+    })
+    loco = (run_loco(train) if positive_clusters < 10
+            else {"triggered": False, "positive_clusters": positive_clusters})
+    feature_info = json.loads((args.features / "feature_names.json").read_text())
+    vocab = feature_info["feature_names"][:feature_info["vocab_size"]]
+    holdout = (evaluate_holdout(full_model, args.data_root, vocab)
+               if full_model is not None else {"rows": 0, "fpr": None})
+    validity = validity_report(train, test, results, loco, args.data_root)
+    diagnostics = (cluster_diagnostics(train, test, full_predictions,
+                                       args.data_root)
+                   if full_predictions is not None else [])
+    header = ("DIAGNOSTIC ONLY — dataset gate failed; not a result"
+              if not gate_ok else "Stage 1 result")
+    if validity["not_a_result"]:
+        header = "DIAGNOSTIC ONLY — split/validity checks failed; not a result"
     payload = {"header": header, "gate_pass": gate_ok,
-               "loco": loco, "models": results}
+               "primary_diagnostic": "loco" if positive_clusters < 10 else "split",
+               "validity": validity, "cluster_diagnostics": diagnostics,
+               "loco": loco, "holdout": holdout, "models": results}
     print(json.dumps(payload, indent=2))
     (args.features / "baseline_results.json").write_text(
         json.dumps(payload, indent=2), encoding="utf-8")

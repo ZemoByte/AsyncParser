@@ -1,5 +1,156 @@
 # results.md — run reports
 
+## Phase 1.5 — gate, MB batch, diagnostic baselines (2026-11-28)
+
+**DIAGNOSTIC ONLY — dataset gate failed; not a result.**
+
+The ceiling moved but did not break: **103 positives in 6 clusters, 79 in one
+cluster (76.7%)**. The non-interactive MB `contains` batch was run and added
+**45 verified AsyncRAT samples (69 new rows)**, but only **3 new clusters**.
+The `contains AsyncRAT` candidate pool is now exhausted (68 candidates), so
+further MB downloads cannot fix Stage 1.
+
+### Gate before/after
+
+| state | rows | benign (primary / holdout) | clusters | AsyncRAT gate | Benign gate | Stage 2 | overall |
+|---|---:|---|---:|---|---|---|---|
+| before P0.0 | 488 | 318 / 0 | 160 | FAIL 3 clusters / 96.6% | PASS 116 / 24.5% | FAIL 1 family | FAIL |
+| after DLL retirement | 309 | 139 / 0 | 116 | FAIL 3 / 96.6% | PASS 71 / 13.7% | FAIL | FAIL |
+| after Hassan holdout | 874 | 139 / 565 | 399 | FAIL 3 / 96.6% | PASS 71 / 13.7% | FAIL | FAIL |
+| after MB batch | 943 | 139 / 565 | 418 | FAIL 6 / 76.7% | PASS 71 / 13.7% | FAIL | FAIL |
+
+The P0.0 check expected **72** benign clusters; the measured value is **71**.
+Largest cluster and share match: **19 (13.7%)**. No cluster IDs or TLSH
+threshold were changed, and no re-randomization was done.
+
+### Benign strata
+
+| stratum | rows | clusters | largest | largest share | singletons |
+|---|---:|---:|---:|---:|---:|
+| `active` | 129 | 70 | 19 | 14.7% | 55 |
+| `fixture` | 10 | 1 | 10 | 100.0% | 0 |
+| `holdout` (Hassan) | 565 | 293 | 108 | 19.1% | 247 |
+| `primary (active+fixture)` | 139 | 71 | 19 | 13.7% | 55 |
+
+Only the primary stratum gates Stage 1; the holdout is measured separately.
+The 10 fixtures form one cluster by construction and are excluded from the
+matrix.
+
+### Stage 2 families
+
+| family | rows | clusters | largest share | result |
+|---|---:|---:|---:|---|
+| AsyncRAT | 103 | 6 | 76.7% | FAIL |
+| XWorm | 9 | 2 | 77.8% | FAIL |
+
+### Splits (241 primary rows: 112 positives, 129 negatives)
+
+| split | rows | positives | positive clusters | all clusters | degenerate |
+|---|---:|---:|---:|---:|---|
+| cluster train | 121 | 25 | 5 | 54 | no |
+| cluster val | 14 | 1 | 1 | 11 | **yes** |
+| cluster test | 106 | 86 | 2 | 13 | **yes** |
+| temporal train | 168 | 78 | 6 | 50 | no |
+| temporal val | 35 | 16 | 5 | 22 | no |
+| temporal test | 38 | 18 | 4 | 21 | no |
+
+Cluster split: **0 clusters span splits**. Temporal split: **11** clusters
+span splits (reported, not hidden). The cluster split is the evaluation split,
+but it is not a balanced evaluation: the test side is dominated by two
+near-duplicate AsyncRAT clusters (79 and 7 samples), while validation has a
+single positive.
+
+### Matrix
+
+- 241 rows; 112 positives; 129 negatives; 78 clusters.
+- Vocabulary: **3,157** items, fitted on the train split only, minimum
+  cluster DF = 3; 11 dense structural counts; seed 42.
+- Shapes: train 121 rows / 25 positives / 54 clusters; val 14 / 1 / 11;
+  test 106 / 86 / 13.
+- Excluded: unverified, review, rejected labels, non-.NET, gold filled,
+  fixtures, and `source=clrheader2023` holdout.
+
+### Baselines (test set is 106 rows with 86 positives — diagnostic)
+
+PR-AUC is shown with the cluster-level bootstrap 95% interval (2.5th, 97.5th
+percentile). Bootstrap means differ slightly from the point estimates.
+
+| model | precision | recall | F1 | PR-AUC [95% CI] |
+|---|---:|---:|---:|---|
+| majority | 0.000 | 0.000 | 0.000 | 0.811 [0.223, 0.963] |
+| logistic, structural only | 0.976 | 0.930 | 0.952 | 0.997 [0.990, 1.000] |
+| TLSH kNN | 1.000 | 0.430 | 0.602 | 0.940 [0.855, 1.000] |
+| LightGBM, full | 1.000 | 1.000 | 1.000 | 1.000 [1.000, 1.000] |
+| LightGBM, capability only | 1.000 | 1.000 | 1.000 | 1.000 [1.000, 1.000] |
+| LightGBM, structural only | 0.988 | 0.988 | 0.988 | 0.999 [0.995, 1.000] |
+
+These numbers are **not** a detector claim. The test positives are two
+near-duplicate clusters, so the model is scored on siblings of the same
+AsyncRAT build it already saw. The structural-only baseline reaching 0.988
+confirms that structural counts alone separate these clusters — evidence that
+the clusters are too homogeneous, not that the capability features work.
+Precision/recall bootstrap intervals collapse to 0.0 at the 2.5th percentile
+whenever a resample draws no positive cluster.
+
+### LOCO (triggered because positive clusters = 5 < 10)
+
+| rows | positives | precision | recall | F1 | PR-AUC |
+|---:|---:|---:|---:|---:|---:|
+| 121 | 25 | 1.000 | 1.000 | 1.000 | 1.000 |
+
+LOCO is the primary diagnostic; the 70/15/15 split is secondary. A perfect
+LOCO score with five positive clusters means the folds share nearly identical
+capability profiles — again a sign of near-duplicate builds, not of
+independent-campaign generalization. The gate still fails.
+
+### External benign holdout (Hassan 2023)
+
+- 757 candidates; **565 unique .NET EXEs** after 192 duplicate removals.
+- `source=clrheader2023`, `origin=github`; kept out of train/val/test.
+- Holdout FPR for the diagnostic LightGBM full model: **2 / 565 = 0.35%**.
+  This is a diagnostic measurement, not a result.
+
+### MB `contains` batch (run)
+
+| stage | rows |
+|---|---:|
+| tag query pool | 500 |
+| dropped by tag filter | 267 |
+| duplicate (already in ledger) | 164 |
+| wrong file type | 1 |
+| new candidates | 68 |
+| downloaded / adopted | 68 (+1 smoke) |
+| new verified AsyncRAT | 45 |
+| new clusters | 3 |
+
+- 69 new ledger rows; 69 signatures stored; 239 rows total.
+- `downloads_rejected` audit table: 1,741 rows, 444 distinct hashes
+  (append-only, one row per poll).
+- One run hit a transient `sqlite3.OperationalError: attempt to write a
+  readonly database` on its 7th download. Six files were on disk without
+  ledger rows; the next run re-adopted them by hash. A post-run `check_ledger`
+  now reports any file without a ledger row, and the batch path is
+  non-interactive (`--batch --tag --file-type --tag-mode --limit --rate`).
+
+### Pipeline bug found and fixed
+
+Running the full labeler rewrote all 704 benign labels **without**
+`source/origin/kind`, which would have leaked the Hassan holdout into
+train/val/test. Provenance is restored for all 704 labels, the full path now
+merges the manifest fields for benign files, and three synthetic tests cover
+the merge. The holdout is again excluded: split rows are 241, not 806.
+
+### Integrity
+
+- DataSet: **943 rows**, 0 NULL `cluster_id`, **418** clusters.
+- Evidence: **6,601 rows** = 7 × 943; scope populated.
+- Class DBs: AsyncRAT 103, OtherMalwares 9, Benign 704.
+- `is_gold=0`; 241 split JSONs; 901 structure JSONs; 943 cluster JSONs;
+  179 DLLs and their derived artifacts live under `Samples/_aux/`.
+- `Data/BenignSources.csv`: 883 rows (139 active EXE + 179 retired DLL +
+  565 Hassan holdout).
+- No commits; no deletions; no sample execution.
+
 ## Phase 0.5 — remaining voters, lineage scope, gold (2026-11-27)
 
 Pipeline: `labeler -> rat-king -> own YARA -> Elastic -> Malpedia ->

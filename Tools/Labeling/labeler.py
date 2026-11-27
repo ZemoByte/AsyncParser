@@ -207,10 +207,21 @@ def load_benign_manifest(path: Path) -> dict[str, dict]:
             if not sha256:
                 continue
             manifest[sha256] = {
+                "source": str(row.get("source") or "unknown"),
                 "origin": str(row.get("origin") or row.get("source") or "unknown"),
                 "ext": str(row.get("ext") or ""),
             }
     return manifest
+
+
+def benign_provenance(entry: dict, path: Path) -> dict:
+    ext = str(entry.get("ext") or path.suffix.lower())
+    kind = "exe" if ext == ".exe" else ("dll" if ext == ".dll" else "other")
+    return {
+        "source": str(entry.get("source") or "unknown"),
+        "origin": str(entry.get("origin") or "unknown"),
+        "kind": kind,
+    }
 
 
 def benign_only(args) -> int:
@@ -232,18 +243,20 @@ def benign_only(args) -> int:
             label_path = labels_dir / f"{sha256}.json"
             evidence_path = evidence_dir / sha256 / "rat_king_parser.json"
             entry = manifest.get(sha256, {})
-            origin = str(entry.get("origin") or "unknown")
-            ext = str(entry.get("ext") or path.suffix.lower())
-            sample_kind = "exe" if ext == ".exe" else ("dll" if ext == ".dll" else "other")
+            provenance = benign_provenance(entry, path)
+            source = provenance["source"]
+            origin = provenance["origin"]
+            sample_kind = provenance["kind"]
             is_net = is_dotnet(path)
             status = "benign" if is_net else "rejected_non_dotnet"
             suggested = "Benign" if is_net else ""
             if label_path.is_file():
                 payload = json.loads(label_path.read_text(encoding="utf-8"))
                 fields = payload.setdefault("fields", {})
-                if fields.get("origin") != origin or fields.get("kind") != sample_kind:
-                    fields["origin"] = origin
-                    fields["kind"] = sample_kind
+                if (fields.get("source") != source
+                        or fields.get("origin") != origin
+                        or fields.get("kind") != sample_kind):
+                    fields.update(provenance)
                     write_json(label_path, payload)
                     written += 1
             else:
@@ -260,6 +273,7 @@ def benign_only(args) -> int:
                         "obf_lvl": "unknown",
                         "parser_version": "",
                         "config": None,
+                        "source": source,
                         "origin": origin,
                         "kind": sample_kind,
                     },
@@ -311,6 +325,7 @@ def main() -> int:
     labels_dir = out_root / "Labels"
     evidence_dir = out_root / "Evidence"
     sample_index = build_sample_index(samples_root)
+    manifest = load_benign_manifest(out_root / "BenignSources.csv")
 
     connection = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
     try:
@@ -376,6 +391,9 @@ def main() -> int:
                 "config": config,
             },
         }
+        if is_benign:
+            entry = manifest.get(sha256, {})
+            payload["fields"].update(benign_provenance(entry, path))
         write_json(labels_dir / f"{sha256}.json", payload)
 
         if not is_net:

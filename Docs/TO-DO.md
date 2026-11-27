@@ -69,7 +69,7 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
     - Elastic 48 hits, Malpedia 71 hits; YARAify client built but no auth key in this run.
 
 - [ ] **Checkpoint:** `dataset.db` has every sample with `sha256`, `label_status`, `cluster_id`, `is_dotnet`, `label_source`
-  - 380 rows, 94 clusters, 0 NULL. `lbl_src` 170 `auto_aggregator` + 210 `hand_benign`; `is_gold=0`. Final labels: 58 `verified`, 9 `verified_other`, 71 `unverified`, 1 `review`, 31 `rejected_non_dotnet`, 210 `benign`.
+  - 943 rows, 418 clusters, 0 NULL. `lbl_src` 239 `auto_aggregator` + 704 `hand_benign`; `is_gold=0`. Final labels: 103 `verified`, 9 `verified_other`, 84 `unverified`, 1 `review`, 42 `rejected_non_dotnet`, 704 `benign` (139 primary + 565 external holdout).
 
 ---
 
@@ -91,15 +91,16 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
   - [x] Output: one JSON per sample, or rows in `capabilities` table
     - `Data/<Class>/<Tool>/<sha256>.json`; the importer writes capability columns into the DBs.
 
-- [ ] **1.3 — Structural counts**
-  - [ ] Number of types, methods, TypeRefs, MemberRefs, P/Invoke entries, resources, sections, file size, section entropy
-  - [ ] These go in `structures` table
+- [x] **1.3 — Structural counts**
+  - [x] Number of types, methods, TypeRefs, MemberRefs, P/Invoke entries, resources, sections, file size, section entropy
+  - [x] `Tools/Structure/structure.py` writes `Data/Structure/<sha>.json` + `.done`; importer adds `structure_*` columns.
+  - [x] 901 .NET structure JSONs after the MB batch.
 
-- [ ] **1.4 — TLSH hash**
-  - [ ] Already computed in 0.2, store it
+- [x] **1.4 — TLSH hash**
+  - [x] Already computed in 0.2; stored in `Data/Clusters/<sha>.json`.
 
 - [ ] **Checkpoint:** Every sample has a feature record. You can inspect a few in dnSpyEx to validate.
-  - Capability JSONs exist for all samples; structural counts and TLSH are missing.
+  - Capability JSONs exist for .NET samples (901 per tool); structure JSONs 901; TLSH is in cluster JSONs. The Stage 1 gate still fails.
 
 ---
 
@@ -107,22 +108,25 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
 
 **Goal:** Training-ready feature matrix with no leakage.
 
-- [ ] **2.1 — Build vocabulary (training split only!)**
-  - [ ] Collect all unique `MemberRef`/`TypeRef` values from **training split only**
-  - [ ] Keep only those appearing in ≥3 distinct clusters (cluster-based MDF)
-  - [ ] Save as `Docs/vocab.json`
+- [x] **2.1 — Build vocabulary (training split only!)**
+  - [x] Collect unique `ImportTable`/`TypeRef`/`MemberRef`/`AssemblyRef`/`ImplMap` values from **training split only**
+  - [x] Keep only those appearing in ≥3 distinct training clusters
+  - [x] Save as `Docs/vocab.json` (3,157 items in the current build)
 
-- [ ] **2.2 — Create splits**
-  - [ ] Cluster split (70/15/15) with `GroupShuffleSplit`
-  - [ ] Temporal split by `first_seen`
-  - [ ] Refuse to run if a cluster spans splits
+- [x] **2.2 — Create splits**
+  - [x] Cluster split (70/15/15) with `GroupShuffleSplit`, fixed seed
+  - [x] Temporal split by `first_seen` (ledger/CSV fallback)
+  - [x] Refuse if a cluster spans the cluster split: 0 spans
+  - [x] Val/test marked degenerate when positive clusters <2; temporal spans reported (10)
 
-- [ ] **2.3 — Feature matrix builder**
-  - [ ] Pivot `capabilities` into a sparse binary matrix (samples × vocab)
-  - [ ] Add structural counts as dense features
-  - [ ] Save as `features/train.npz`, `features/val.npz`, `features/test.npz`
+- [x] **2.3 — Feature matrix builder**
+  - [x] Pivot capability values into a sparse binary matrix (samples × vocab)
+  - [x] Add 11 structural counts as the only dense numeric features
+  - [x] `Data/Features/{train,val,test}.npz`, `feature_names.json`, `metadata.json`
+  - [x] Current primary matrix: 241 rows / 112 positives / 78 clusters
 
 - [ ] **Checkpoint:** You have `X_train`, `X_val`, `X_test`, `y_train`, `y_val`, `y_test` as numpy/scipy arrays.
+  - Arrays exist, but the Stage 1 gate fails; test has 1 positive and is diagnostic only.
 
 ---
 
@@ -130,23 +134,37 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
 
 **Goal:** Working predictions with honest evaluation.
 
-- [ ] **3.1 — Trivial baseline**
-  - [ ] Logistic regression on structural counts only
-  - [ ] Shows what the capability table adds
+- [x] **3.1 — Trivial baseline**
+  - [x] Majority class + logistic regression on structural counts only
+  - [x] Shows what the capability table adds (diagnostic only)
 
-- [ ] **3.2 — LightGBM (mandatory)**
-  - [ ] Binary capability vectors + structural counts
-  - [ ] Report: precision, recall, F1, PR-AUC, full confusion matrix
+- [x] **3.2 — LightGBM (mandatory)**
+  - [x] Binary capability vectors + structural counts; capability-only and structural-only ablations
+  - [x] Reports precision, recall, F1, PR-AUC, confusion matrix, cluster-level CIs
+  - [x] LightGBM 4.7.0 installed; no fallback used
 
-- [ ] **3.3 — TLSH kNN baseline**
-  - [ ] Nearest neighbor by TLSH distance
-  - [ ] Report nearest sample and distance as explanation
+- [x] **3.3 — TLSH kNN baseline**
+  - [x] Nearest neighbor by TLSH distance from `Data/Clusters/<sha>.json`
+  - [x] Diagnostic only; test positives sit in 2 near-duplicate clusters
 
 - [ ] **3.4 — Abstention gate**
   - [ ] Calibrate threshold from data (TypeRef + MemberRef count distributions)
   - [ ] Report abstain rate per class
 
 - [ ] **Checkpoint:** `Docs/results.md` with confusion matrices, per-class coverage, ablation table.
+  - Diagnostic section written; not a result because the gate fails.
+
+---
+
+## Phase 1.5 — positive diversity and gate
+
+- [x] **P0.0 — retire DLLs:** 179 DLLs and derived artifacts moved to `Samples/_aux/`; 309 rows / 139 benign; evidence 2,163.
+- [x] **P0.1 — MB contains batch:** non-interactive `--batch --tag AsyncRAT --file-type exe --tag-mode contains` added (`--limit`, `--rate`, `downloads_rejected` audit table, post-run ledger check). Pool 500 → 267 tag-filter, 164 duplicate, 1 wrong type, **68 new**; all 68 downloaded (plus the 1 smoke sample), 69 new ledger rows, 69 signatures stored. Transient `sqlite3` readonly error lost 6 rows on one run; the files were re-adopted (hash-checked) and a ledger check now flags any file without a row.
+- [x] **P0.2 — Hassan benign holdout:** 565 unique .NET EXEs (192 duplicates); `source=clrheader2023`, `origin=github`; out of train/val/test; holdout FPR 2/565 = 0.35% (diagnostic).
+- [x] **P0.3 — full pipeline:** 943 rows; 0 NULL cluster_id; evidence 6,601 = 7 × 943; class DBs 103 / 9 / 704.
+- [x] **P0.4 — gate/LOCO fixes:** Stage 2 counts AsyncRAT + each `verified_other` family with share; LOCO triggers on positive clusters <10; split reports positive clusters/degenerate; 0 cluster spans.
+- [x] **P0.5 — report:** Phase 1.5 section in `Docs/results.md`; marked DIAGNOSTIC ONLY.
+- [ ] **Still failing:** AsyncRAT 103 positives in 6 clusters, 79 in one (76.7%). The `contains AsyncRAT` pool is exhausted (68 candidates); more MB downloads will not add clusters. Stage 1 is not trainable until independent positive clusters increase.
 
 ---
 
