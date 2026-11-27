@@ -1,1 +1,0 @@
-{"fields": {"values": ["Ole32!CreateItemMoniker", "Ole32!GetRunningObjectTable", "kernel32.dll!CreateProcess", "kernel32.dll!FindClose", "kernel32.dll!FindFirstFileW", "kernel32.dll!FindNextFileW", "shlwapi.dll!PathMatchSpecExW"]}, "kind": "ImplMap", "producer": "impl_map", "schema_version": 1, "sha256": "a93168683fa0269ed573530e6bfddfab3f12530c0ccf9d95ebd33e5a355d0af1"}

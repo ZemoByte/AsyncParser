@@ -1,1 +1,0 @@
-{"fields": {"values": ["Microsoft.Build.Framework", "Microsoft.Build.Utilities.Core", "System", "System.Core", "System.Memory", "System.Numerics", "System.Reflection.MetadataLoadContext", "System.Xml", "mscorlib"]}, "kind": "AssemblyRef", "producer": "assembly_ref", "schema_version": 1, "sha256": "472e74e39479718921e462456c09bd6cee082866cce8f0a153eb15f3ccddfd2e"}

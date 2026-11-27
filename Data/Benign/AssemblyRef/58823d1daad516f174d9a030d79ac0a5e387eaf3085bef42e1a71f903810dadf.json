@@ -1,1 +1,0 @@
-{"fields": {"values": ["System.Collections", "System.Collections.Concurrent", "System.Diagnostics.Tracing", "System.Linq", "System.Runtime", "System.Threading", "System.Threading.Thread", "System.Threading.ThreadPool"]}, "kind": "AssemblyRef", "producer": "assembly_ref", "schema_version": 1, "sha256": "58823d1daad516f174d9a030d79ac0a5e387eaf3085bef42e1a71f903810dadf"}

@@ -1,1 +1,0 @@
-{"fields": {"values": ["kernel32.dll!FindClose", "kernel32.dll!FindFirstFileW", "kernel32.dll!FindNextFileW", "shlwapi.dll!PathMatchSpecExW"]}, "kind": "ImplMap", "producer": "impl_map", "schema_version": 1, "sha256": "7a842f692cef72d058a8f0adb2c5e114fab9b82550fbbb421d476c20d23cc465"}

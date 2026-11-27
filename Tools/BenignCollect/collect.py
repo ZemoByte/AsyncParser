@@ -69,7 +69,7 @@ USER_AGENT = "AsyncParser-benign-collector/1.0"
 MAX_CANDIDATE_BYTES = 50 * 1024 * 1024
 MAX_ARCHIVE_BYTES = 300 * 1024 * 1024
 CSV_COLUMNS = ("sha256", "source", "origin", "ext", "url", "license",
-               "size", "collected_at")
+               "size", "collected_at", "status")
 
 
 def utc_now() -> str:
@@ -260,6 +260,7 @@ def append_sources_csv(path: Path, rows: list[dict],
         for row in existing_rows:
             row["origin"] = row.get("origin") or row.get("source") or "unknown"
             row["ext"] = row.get("ext") or _infer_ext(samples_root, row.get("sha256", ""))
+            row["status"] = row.get("status") or "active"
         existing_rows = [{key: row.get(key, "") for key in CSV_COLUMNS}
                          for row in existing_rows]
 
@@ -467,6 +468,7 @@ def main() -> int:
             "license": item["license"],
             "size": item["size"],
             "collected_at": utc_now(),
+            "status": "active",
         })
     appended = append_sources_csv(args.out_csv, csv_rows, samples_root)
     print(f"copied={copied} csv_rows={appended} out={args.out_csv}")

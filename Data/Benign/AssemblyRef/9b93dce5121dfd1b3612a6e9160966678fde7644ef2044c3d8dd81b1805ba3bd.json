@@ -1,1 +1,0 @@
-{"fields": {"values": ["Microsoft.AspNetCore.Razor.Utilities.Shared", "Microsoft.CodeAnalysis", "Microsoft.CodeAnalysis.CSharp", "Microsoft.Extensions.ObjectPool", "System.Collections.Immutable", "System.Memory", "netstandard"]}, "kind": "AssemblyRef", "producer": "assembly_ref", "schema_version": 1, "sha256": "9b93dce5121dfd1b3612a6e9160966678fde7644ef2044c3d8dd81b1805ba3bd"}
