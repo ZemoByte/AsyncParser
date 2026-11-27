@@ -1,1 +1,0 @@
-{"fields": {"values": ["dts!BIDSSKUIsWKGorUnder", "dts!DTSSKUIsWKGorUnder", "dts!EngineSKUIsWKGorUnder", "dts!TOOLSSKUIsWKGorUnder", "kernel32!CloseHandle", "kernel32!DuplicateHandle", "kernel32!SetEvent"]}, "kind": "ImplMap", "producer": "impl_map", "schema_version": 1, "sha256": "aa10bfe51228e5210c7e34372d4e9ebe75e920ba85edb2e6350c2e390899cf09"}

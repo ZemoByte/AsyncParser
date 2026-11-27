@@ -1,1 +1,0 @@
-{"fields": {"values": ["Microsoft.SqlServer.ConnectionInfo", "Microsoft.SqlServer.Smo", "Microsoft.SqlServer.SmoExtended", "Microsoft.SqlServer.SqlEnum", "System", "System.Data", "mscorlib"]}, "kind": "AssemblyRef", "producer": "assembly_ref", "schema_version": 1, "sha256": "8bc53c486cba7fca5ffe4dd43976cbaac6bfb24acc95d23da5ad5bc0e0689a3e"}

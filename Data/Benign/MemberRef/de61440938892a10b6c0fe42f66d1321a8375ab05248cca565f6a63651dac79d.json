@@ -1,1 +1,0 @@
-{"fields": {"values": ["System.Console::WriteLine", "System.Object::.ctor", "System.Random::.ctor", "System.Random::Next", "System.Runtime.CompilerServices.RuntimeCompatibilityAttribute::.ctor", "System.String::Concat"]}, "kind": "MemberRef", "producer": "member_ref", "schema_version": 1, "sha256": "de61440938892a10b6c0fe42f66d1321a8375ab05248cca565f6a63651dac79d"}

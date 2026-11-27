@@ -1,1 +1,0 @@
-{"fields": {"values": ["libc!sysctl", "libc!uname", "ntdll!RtlGetVersion"]}, "kind": "ImplMap", "producer": "impl_map", "schema_version": 1, "sha256": "36bd99b2df3d255f3a72602bb90c9d0ba4511c5f5715e4cd5d67c83f43020a5d"}
