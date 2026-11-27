@@ -291,8 +291,8 @@ These five were labelled Q11–Q15 when asked in chat, but Q11–Q18 already exi
 
 ### Label-evidence follow-up (2026-11-27)
 
-- The HIGH hard-negative finding is resolved by design and the offline core is implemented: independent-voter aggregator + `verified_other` routing (`Docs/DECISIONS.md` §36-37, `Docs/Plan.md` §4). Real `verified_other` rows are 0 until a second family voter exists.
-- `OtherMalwares.db` routing is implemented and tested; the DB is absent today because there are 0 `verified_other` rows. `review` still stays in `DataSet.db` only.
+- The HIGH hard-negative finding is resolved and tested on real data: independent-voter aggregator + `verified_other` routing (`Docs/DECISIONS.md` §36-38, `Docs/Plan.md` §4). Result: 9 XWorm `verified_other` rows.
+- `OtherMalwares.db` has 8 rows after gold exclusion (9 before); `review` still stays in `DataSet.db` only. The one remaining review is a real Elastic DcRat vs rat-king VenomRAT conflict.
 - Pipeline order is now `labeler -> voters -> aggregator -> clusterer -> carvers -> importer`. The clusterer reads the final label through `Tools/_label_common.load_final_label`, so `verified_other` families stay partitioned.
 - Two proposed voters are excluded to avoid label leakage: PE/.NET metadata (Layer A features) and TLSH-to-reference (kNN feature). Config/default-value checks, YARA strings, MB metadata and DIE are safe.
-- MalwareBazaar metadata is currently blocked by the live ledger gap: `samples.db` has no `signature` column and empty `api_tags`.
+- The MalwareBazaar voter is implemented and run; the live ledger has no `signature` column and empty `api_tags`, so its evidence is weak-only until a backfill.

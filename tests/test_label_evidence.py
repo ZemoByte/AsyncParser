@@ -29,14 +29,15 @@ from Tools.Importer.importer import (  # noqa: E402
 )
 
 
-def ev(source="voter", group="g1", verdict="AsyncRAT", strength="strong"):
+def ev(source="voter", group="g1", verdict="AsyncRAT", strength="strong",
+       scope="family"):
     return {
         "source": source,
         "source_version": "v1",
         "independence_group": group,
         "verdict": verdict,
         "strength": strength,
-        "raw": {},
+        "raw": {"scope": scope},
         "observed_at": "2026-01-01T00:00:00+00:00",
     }
 
@@ -116,6 +117,37 @@ class AggregatorTests(unittest.TestCase):
             ev(group="g3", verdict="AsyncRAT", strength="strong"),
         ])
         self.assertEqual(result["lbl_sts"], "review")
+
+    def test_lineage_asyncrat_counts_for_verified(self):
+        result = aggregate(label(), [
+            ev(group="g1", verdict="AsyncRAT", strength="strong", scope="lineage"),
+            ev(group="g2", verdict="AsyncRAT", strength="strong"),
+        ])
+        self.assertEqual(result["lbl_sts"], "verified")
+
+    def test_lineage_asyncrat_does_not_block_verified_other(self):
+        result = aggregate(label(), [
+            ev(group="g1", verdict="AsyncRAT", strength="strong", scope="lineage"),
+            ev(group="g2", verdict="XWorm", strength="strong"),
+            ev(group="g3", verdict="XWorm", strength="strong"),
+        ])
+        self.assertEqual(result["lbl_sts"], "verified_other")
+        self.assertEqual(result["sug_fam"], "XWorm")
+
+    def test_lineage_plus_one_fork_is_unverified_fork(self):
+        result = aggregate(label(), [
+            ev(group="g1", verdict="AsyncRAT", strength="strong", scope="lineage"),
+            ev(group="g2", verdict="XWorm", strength="strong"),
+        ])
+        self.assertEqual(result["lbl_sts"], "unverified")
+        self.assertEqual(result["sug_fam"], "XWorm")
+
+    def test_lineage_alone_is_unverified_asyncrat(self):
+        result = aggregate(label(), [
+            ev(group="g1", verdict="AsyncRAT", strength="strong", scope="lineage"),
+        ])
+        self.assertEqual(result["lbl_sts"], "unverified")
+        self.assertEqual(result["sug_fam"], "AsyncRAT")
 
     def test_rule8_benign_passthrough(self):
         result = aggregate(label(status="benign", family="Benign"), [ev()])

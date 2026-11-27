@@ -505,3 +505,109 @@ After:
 - The own-YARA rule is a lineage detector. It is independent in rule strings
   from rat-king/Elastic, but not independent in the statistical sense for
   forks; that is why contradicting forks stay in `review`.
+
+## 38. Remaining voters, lineage scope, gold set and real promotion (2026-11-27)
+
+Scope: MalwareBazaar, Detect It Easy, Elastic, Malpedia, YARAify voters; the
+gold-set workflow; real `verified_other` promotion; no commits.
+
+### Q89 — Voters built and run
+
+- **Elastic**: `Reference/Elastic/rules/` (gitignored), rules
+  `Windows_Trojan_Asyncrat_11a11ba1`, `Windows_Trojan_DCRat_1aeea1ac`,
+  `Windows_Trojan_XWorm_*`, `Windows_Trojan_Quasarrat_e52df647`. 48/180 hits.
+  Elastic License 2.0, local use only.
+- **Malpedia**: white-TLP rules from `/api/get/yara/<family_id>` under
+  `Reference/Malpedia/rules/` (gitignored). Families with white rules:
+  `win.asyncrat`, `win.dcrat`, `win.xworm`, `win.quasar_rat`, `win.njrat`,
+  `win.remcos`, `win.xenorat`; `win.venom` has none. 71/180 hits.
+- **MalwareBazaar**: reads the ledger read-only. `signature` is used as medium
+  when present, otherwise `tag`/`secondary_tag`/`api_tags` are weak. The live
+  ledger has no `signature`, so this run is weak-only: 165/180 hits. Optional
+  per-sample cache and API paths exist; no live API call was made.
+- **Detect It Easy**: `Tools/Voters/DIE/die_voter.py`. `diec` is not installed,
+  so all 180 samples are `no_match` with `raw.reason=diec_not_installed` and
+  `raw.obf_lvl=unknown`. The importer already knows how to read
+  `raw.obf_lvl` from this evidence and override `obf_lvl` when `diec` exists.
+- **YARAify**: `Tools/Voters/YARAify/yaraify_voter.py`. `YARAIFY_AUTH_KEY` is
+  not set, so all 180 are `no_match` with `raw.reason=auth_key_missing`. The
+  `lookup_hash` client is implemented for later use.
+- The aggregator and importer now require seven sources:
+  `rat_king_parser, own_yara, elastic, malpedia, malwarebazaar,
+  detect_it_easy, yaraify`.
+
+### Q90 — Lineage scope (important)
+
+- `own_yara`, `elastic`, `malpedia`, `malwarebazaar` and `yaraify` set
+  `raw.scope="lineage"` when their verdict is AsyncRAT. Their AsyncRAT rules
+  also hit AsyncRAT-derived forks.
+- `rat_king_parser` AsyncRAT remains `scope="family"`.
+- Lineage AsyncRAT counts toward `verified` but is **not** a contradiction
+  against a family-specific fork vote.
+- `verified_other` requires two **family-scoped** groups for the fork.
+- Contradictions and review `sug_fam` use family-scoped groups only, so a
+  DcRat/VenomRAT conflict is not labelled AsyncRAT.
+- This is why the 9 XWorm rows promoted and `review` fell from 13 to 1.
+
+### Q91 — Gold set
+
+- `Tools/Gold/build_gold_set.py` selects one sample per cluster, stratified by
+  `lbl_sts`, and writes `Data/Gold/gold.csv` with human fields blank.
+- Real selection: 30 samples from 30 distinct clusters — 3 verified,
+  1 review, 1 verified_other, 18 unverified, 1 benign, 6 rejected_non_dotnet.
+- `is_gold=1` excludes a row from every class DB. The importer deletes stale
+  gold rows from the class DBs after an earlier import. Verified after the
+  run: `AsyncRAT.db` 55 (was 58), `OtherMalwares.db` 8 (was 9), `Benign.db` 9
+  (was 10), 0 gold overlap.
+- `gold_fam` is NULL until a human fills the CSV. The aggregator applies rule
+  10 (`lbl_src=human_gold`) only when `gold_status` is non-empty.
+- No sample was hand-labeled in dnSpyEx in this run; the template and checklist
+  are in `Tools/Gold/README.md`.
+
+### Q92 — Real run results
+
+Before (Phase 0.4): 48 verified, 78 unverified, 31 rejected_non_dotnet,
+13 review, 10 benign; 2 of 45 clusters had a verified AsyncRAT.
+
+After the remaining voters:
+
+| label | count |
+|---|---:|
+| verified | 58 |
+| verified_other | 9 (all XWorm) |
+| unverified | 71 |
+| rejected_non_dotnet | 31 |
+| review | 1 |
+| benign | 10 |
+
+- `sug_fam`: 155 empty, 10 Benign, 9 XWorm, 3 DcRat, 2 QuasarRAT, 1 AsyncRAT.
+- Clusters: 45, 14 multi-member, 0 mixed-family.
+- Clusters containing ≥1 verified AsyncRAT: **3 of 45** (was 2).
+- `OtherMalwares.db`: **9 rows** before gold exclusion, **8** after; carved
+  columns present (`ImportTable_values`, `TypeRef_values`, `MemberRef_values`,
+  `AssemblyRef_values`, `ImplMap_values`).
+- The one remaining review is
+  `10102a03f784`: Elastic DcRat strong vs rat-king VenomRAT strong. This is a
+  real family disagreement, not a lineage artefact.
+- DcRat (2) and QuasarRAT (2) remain `unverified` because only rat-king votes
+  for them; Elastic/Malpedia did not provide a second family-scoped group.
+- `obf_lvl` remains `unknown` for all 180 because `diec` is not installed.
+- `label_evidence`: 1260 rows (7 × 180), max `raw` 1246 bytes.
+- Gold: 30 rows, `is_gold=1`, `gold_fam` NULL, 0 class-DB overlap.
+- Data-loss check: 180 labels byte-identical, all 15 carved directories
+  byte-identical, `samples.db` hash unchanged, `DataSet.db` 180 rows / 0 NULL
+  clusters.
+
+### Q93 — Deviations and open items
+
+- The Ultimate-Rat-Collection AsyncRAT builder `.7z` archives
+  (<https://github.com/Cy-Shadow/Ultimate-Rat-Collection/tree/main/AsyncRAT>)
+  were downloaded to `Reference/Ultimate-Rat-Collection/AsyncRAT/` (gitignored,
+  not extracted, not run). The client **source** is still
+  `NYAN-x-CAT/AsyncRAT-C-Sharp` at `0f0cba4`; the collection contains builder
+  archives, not source.
+- `diec`, `YARAIFY_AUTH_KEY` and the MalwareBazaar `signature` column are the
+  three external gaps. `obf_lvl` enrichment and MB medium evidence cannot be
+  demonstrated until they exist.
+- Gold rows are not hand-labeled; the audit precision/recall table is pending.
+- No commits.

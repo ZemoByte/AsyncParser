@@ -38,29 +38,36 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
     - Constraint respected.
 
 - [ ] **0.4 — Label evidence and aggregation**
-  - Offline core done (rat-king + own YARA + aggregator + importer + tests);
-    MalwareBazaar/DIE/community voters and the gold set remain.
+  - Seven voters, aggregator, importer, tests and gold template are done.
+    External gaps: `diec`, `YARAIFY_AUTH_KEY`, MB `signature`; gold is not hand-labeled.
   - [x] Add `label_evidence` table (`sha256, source, source_version, independence_group, verdict, strength, raw, observed_at`)
+    - 1260 rows (7 voters × 180 samples).
   - [x] Voter 1: own YARA rules derived from the AsyncRAT source (strings, not Layer A metadata)
     - `Tools/Voters/OwnYara/`; 13 strings, 4-of-13, benign hits 0. Source commit `0f0cba4`, reference-only.
-  - [ ] Voter 2: MalwareBazaar metadata (`signature` medium; tags/vendor_intel/ClamAV weak)
-    - Blocked: live `samples.db` has no `signature` column and empty `api_tags`; migrate first.
-  - [ ] Voter 3: Detect It Easy `diec -j -d -e` for `obf_lvl` only (not a family vote)
+  - [x] Voter 2: MalwareBazaar metadata (`signature` medium; tags/vendor_intel/ClamAV weak)
+    - Implemented and run; ledger has no `signature`, so this run is weak-only (165 hits).
+  - [x] Voter 3: Detect It Easy `diec -j -d -e` for `obf_lvl` only (not a family vote)
+    - Voter built and run; `diec` is not installed, so all 180 are `unknown`.
   - [x] Voter 4 (existing): `rat_king_parser`; no match is abstention, not a negative
     - 180 evidence files; parser version 4.2.4.
   - [x] Aggregator: `verified` = CLR + ≥2 independent strong/medium AsyncRAT agreements + no contradiction
+    - Real result: 58 `verified` (was 48); 3 of 45 clusters contain a verified AsyncRAT.
   - [x] Aggregator: `verified_other` routing for XWorm/DcRat/QuasarRAT/VenomRAT/NjRAT/Remcos/XenoRat → `OtherMalwares.db`
-    - Routing tested; 0 real rows because only rat-king votes on non-AsyncRAT families.
+    - Real result: 9 XWorm `verified_other`; `OtherMalwares.db` 8 rows after gold exclusion.
   - [x] Aggregator: `review` on contradiction; `unverified` on one/weak/no votes
+    - Real result: 1 genuine review (`10102a03f784`, Elastic DcRat vs rat-king VenomRAT).
   - [x] Importer: add `lbl_src`, `lbl_reason`, `is_gold`, `gold_fam`; route `verified_other`
-  - [x] Tests inside the repo: `python3 tests/run_tests.py` → 25 pass
-  - [ ] Gold set: ~30 samples by cluster, hand-labeled in dnSpyEx, frozen before labeling, excluded from training
+  - [x] Tests inside the repo: `python3 tests/run_tests.py` → 36 pass
+  - [x] Gold template: 30 samples from 30 distinct clusters, `is_gold=1`, excluded from class DBs
+    - `Tools/Gold/README.md`; human fields are blank.
+  - [ ] Hand-label the 30 gold rows in dnSpyEx, then run the audit
   - [ ] Audit: per-voter coverage/precision/recall/F1, contradiction rate, `obf_lvl` agreement → `Docs/results.md`
-    - Coverage and contradiction report started in `Docs/results.md`; precision/recall need the gold set.
-  - [ ] Add Elastic (`Windows_Trojan_Asyncrat_11a11ba1`), Malpedia (`win.asyncrat`), YARAify `lookup_hash` as later voters
+    - Coverage and contradiction report started; precision/recall need the hand-labeled gold set.
+  - [x] Add Elastic (`Windows_Trojan_Asyncrat_11a11ba1`), Malpedia (`win.asyncrat`), YARAify `lookup_hash` as voters
+    - Elastic 48 hits, Malpedia 71 hits; YARAify client built but no auth key in this run.
 
 - [ ] **Checkpoint:** `dataset.db` has every sample with `sha256`, `label_status`, `cluster_id`, `is_dotnet`, `label_source`
-  - `cluster_id` is done (45 clusters). `label_source`/`is_gold` are done (170 `auto_aggregator`, 10 `hand_benign`; 180 `is_gold=0`).
+  - `cluster_id` done (45 clusters, 0 NULL). `lbl_src` 170 `auto_aggregator` + 10 `hand_benign`; `is_gold` 150 × 0 + 30 × 1. Real labels: 58 `verified`, 9 `verified_other`, 71 `unverified`, 1 `review`, 31 `rejected_non_dotnet`, 10 `benign`.
 
 ---
 
@@ -188,8 +195,12 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
   - Installed (`python_tlsh-4.5.0`); clustering runs.
 - [ ] **Install Detect It Easy** (`diec`) — needed for `obf_lvl`; read `diec --version` and `diec -h`
 - [ ] **Fix the MalwareBazaar ledger**: add `signature`, `file_size`, `last_seen` to the live `downloads` table and populate `api_tags`
-- [ ] **Write own AsyncRAT YARA rules** from the source strings (not from rat-king-parser or Elastic)
-- [ ] **Freeze the gold-set SHA-256 list** before hand-labeling, so the audit is not tuned on the same samples
+- [x] **Write own AsyncRAT YARA rules** from the source strings (not from rat-king-parser or Elastic)
+  - `Tools/Voters/OwnYara/`; benign hits 0.
+- [x] **Freeze the gold-set SHA-256 list** before hand-labeling, so the audit is not tuned on the same samples
+  - `Data/Gold/gold.csv`, 30 clusters, human fields blank.
+- [ ] **Set `YARAIFY_AUTH_KEY`** to enable the YARAify hash lookup voter
+- [ ] **Hand-label the 30 gold rows** in dnSpyEx and run the precision/recall audit
 - [x] **Sketch `dataset.db` schema** on paper before coding
   - Recorded in `Docs/DECISIONS.md` §2.
 - [ ] **Collect 10–20 benign .NET exes** from your own machine to test the extractor

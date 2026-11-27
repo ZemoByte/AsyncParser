@@ -1,5 +1,90 @@
 # results.md — run reports
 
+## Phase 0.5 — remaining voters, lineage scope, gold (2026-11-27)
+
+Pipeline: `labeler -> rat-king -> own YARA -> Elastic -> Malpedia ->
+MalwareBazaar -> DIE -> YARAify -> aggregator -> clusterer -> carvers ->
+importer -> gold template -> importer`.
+
+### Final `lbl_sts` (before vs after)
+
+| label | Phase 0.4 | Phase 0.5 |
+|---|---:|---:|
+| `verified` | 48 | **58** |
+| `verified_other` | 0 | **9** (all XWorm) |
+| `unverified` | 78 | 71 |
+| `rejected_non_dotnet` | 31 | 31 |
+| `review` | 13 | **1** |
+| `benign` | 10 | 10 |
+
+`sug_fam`: 155 empty, 10 Benign, 9 XWorm, 3 DcRat, 2 QuasarRAT, 1 AsyncRAT.
+
+### Voter hits
+
+| Voter | Hits | Notes |
+|---|---:|---|
+| own YARA | 73 | 48 verified, 13 review, 9 unverified, 3 non-.NET; benign 0 |
+| Elastic | 48 | 45 verified, 3 review; AsyncRAT scope lineage |
+| Malpedia | 71 | 48 verified, 10 review, 10 unverified, 3 non-.NET; AsyncRAT lineage |
+| MalwareBazaar | 165 | weak ledger tags only; no `signature` column |
+| Detect It Easy | 0 family | `diec` not installed; 180 `obf_lvl=unknown` |
+| YARAify | 0 | no `YARAIFY_AUTH_KEY`; 180 no_match |
+
+`label_evidence`: **1260 rows** (7 × 180), max `raw` 1246 bytes.
+
+### Real `verified_other` promotion
+
+- 9 XWorm samples are `verified_other`; `OtherMalwares.db` has **8 rows** after
+  gold exclusion (9 before).
+- The promotion is real, not synthetic: rat-king XWorm strong + Malpedia
+  and/or Elastic XWorm family-scoped strong, with own-YARA/Elastic/Malpedia
+  AsyncRAT evidence marked `scope=lineage` so it does not contradict the fork.
+- DcRat (2) and QuasarRAT (2) remain `unverified`: only rat-king votes for
+  them; no second family-scoped group matched.
+
+### Remaining contradiction
+
+Only one review remains:
+
+| sha256 prefix | voters | verdicts |
+|---|---|---|
+| `10102a03f784` | `elastic` (family) vs `rat_king_parser` (family) | DcRat strong vs VenomRAT strong |
+
+This is a genuine family disagreement, not a lineage artefact.
+
+### Clusters
+
+- 45 clusters, 14 multi-member, 0 mixed-family.
+- Clusters containing ≥1 `verified` AsyncRAT: **3 of 45** (was 2).
+- The two verified clusters from Phase 0.4 plus one more now contain verified
+  AsyncRAT; the XWorm `verified_other` group is partitioned separately.
+
+### Gold set
+
+- `Tools/Gold/build_gold_set.py` selected **30 samples from 30 distinct
+  clusters**: 3 verified, 1 verified_other, 1 review, 18 unverified, 1 benign,
+  6 rejected_non_dotnet.
+- `Data/Gold/gold.csv` human fields are blank; `gold_fam` is NULL.
+- `is_gold=1` on 30 rows. Class DBs after exclusion: `AsyncRAT.db` 55 (was 58),
+  `OtherMalwares.db` 8 (was 9), `Benign.db` 9 (was 10), **0 gold overlap**.
+- Hand-labeling in dnSpyEx is pending; precision/recall audit is not done.
+
+### Data-loss checks
+
+- 180 label JSONs byte-identical.
+- All 15 carved directories byte-identical.
+- `samples.db` SHA-256 unchanged.
+- `DataSet.db` 180 rows, 0 NULL `cluster_id`.
+- `label_evidence` 1260 rows; `lbl_reason` valid JSON on all rows.
+
+### Plain conclusion
+
+The remaining voters materially improved the result: `verified` 48→58,
+`verified_other` 0→9, `review` 13→1, cluster coverage 2→3. The two blockers
+left are external: install `diec` for `obf_lvl`, and provide `YARAIFY_AUTH_KEY`
+and/or a MalwareBazaar `signature` backfill for stronger metadata evidence.
+DcRat/QuasarRAT need a second family-scoped voter before promotion.
+
 ## Label coverage (Phase 0.4 offline core, 2026-11-27)
 
 Pipeline: `labeler -> rat_king_parser evidence -> own YARA -> aggregator ->

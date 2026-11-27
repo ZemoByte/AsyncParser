@@ -103,6 +103,10 @@ def main() -> int:
         verdict = "AsyncRAT" if matches else "no_match"
         raw = match_raw(matches)
         raw["class_dir"] = class_name
+        # Own YARA detects the AsyncRAT lineage, including forks.  The
+        # aggregator must not treat this as a family-specific vote that
+        # contradicts a fork-specific voter.
+        raw["scope"] = "lineage"
         payload = {
             "schema_version": 1,
             "sha256": sha256,

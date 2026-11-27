@@ -22,6 +22,7 @@ from Tools._label_common import (  # noqa: E402
     STRENGTHS,
     canonical_family,
     load_final_label,
+    load_gold_labels,
 )
 
 DATA_DIR = ROOT / "Data"
@@ -30,7 +31,8 @@ EVIDENCE_DIR = DATA_DIR / "Evidence"
 AGGREGATED_DIR = DATA_DIR / "Aggregated"
 SUPPORTED_SCHEMA_VERSION = 1
 TOOLS = ("ImportTable", "TypeRef", "MemberRef", "AssemblyRef", "ImplMap")
-REQUIRED_EVIDENCE_SOURCES = ("rat_king_parser", "own_yara")
+REQUIRED_EVIDENCE_SOURCES = ("rat_king_parser", "own_yara", "elastic", "malpedia",
+                             "malwarebazaar", "detect_it_easy", "yaraify")
 EXCLUDED_LABELS = {"unverified", "review", "rejected_non_dotnet",
                    "rejected_hash_mismatch", "reference_only"}
 EVIDENCE_COLUMNS = {
@@ -271,6 +273,21 @@ def main() -> int:
         if sample["status"] in {"success", "adopted"}
     }
     evidence_rows = read_evidence_rows(EVIDENCE_DIR, active_shas)
+    gold_labels = load_gold_labels(DATA_DIR)
+    for sha256 in gold_labels:
+        if sha256 not in samples:
+            raise RuntimeError(f"gold row for unknown sample: {sha256}")
+    die_obf: dict[str, str] = {}
+    for row in evidence_rows:
+        if row["source"] != "detect_it_easy":
+            continue
+        try:
+            raw = json.loads(row["raw"])
+        except (TypeError, json.JSONDecodeError):
+            continue
+        obf_lvl = raw.get("obf_lvl") if isinstance(raw, dict) else None
+        if obf_lvl:
+            die_obf[row["sha256"]] = str(obf_lvl)
 
     carved = {sha: {} for sha in samples}
     for class_dir in (DATA_DIR / "AsyncRAT", DATA_DIR / "OtherMalwares", DATA_DIR / "Benign"):
@@ -394,18 +411,29 @@ def main() -> int:
                     raise RuntimeError(f"missing label JSON for {sha256}")
                 label = labels[sha256]["fields"]
             label["sug_fam"] = canonical_family(label.get("sug_fam", ""))
+            gold = gold_labels.get(sha256)
+            is_gold = 1 if gold else 0
+            gold_fam = None
+            if gold and gold.get("gold_family"):
+                gold_fam = canonical_family(gold["gold_family"])
             target_class = target_class_db(label)
+            # Gold rows stay in DataSet.db only; they must never reach a class
+            # DB or a training split.
+            if is_gold:
+                target_class = None
             row = {"sha256": sha256, "target_class_db": target_class}
             for key in ("lbl_sts", "sug_fam", "obf_lvl", "parser_version"):
                 row[safe_column(key)] = label.get(key, "")
+            if sha256 in die_obf:
+                row["obf_lvl"] = die_obf[sha256]
             row["cluster_id"] = clusters[sha256]
             row["split"] = existing_splits.get(sha256)
             row["lbl_src"] = label.get("lbl_src") or (
                 "hand_benign" if label.get("lbl_sts") == "benign" else "parser_only"
             )
             row["lbl_reason"] = label.get("lbl_reason")
-            row["is_gold"] = 0
-            row["gold_fam"] = None
+            row["is_gold"] = is_gold
+            row["gold_fam"] = gold_fam
             config = label.get("config", None)
             row["config"] = json.dumps(config) if isinstance(config, (dict, list)) else config
             for key, value in label.items():
@@ -450,6 +478,27 @@ def main() -> int:
                 conn_class.commit()
             finally:
                 conn_class.close()
+        # Gold rows must not remain in the class DBs from an earlier import.
+        # This is derived data only; sample files are never touched.
+        if gold_labels:
+            placeholders = ",".join("?" for _ in gold_labels)
+            for class_name in ("AsyncRAT.db", "OtherMalwares.db", "Benign.db"):
+                class_path = DATA_DIR / class_name
+                if not class_path.is_file():
+                    continue
+                conn_class = sqlite3.connect(class_path)
+                try:
+                    exists = conn_class.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='samples'"
+                    ).fetchone()
+                    if exists:
+                        conn_class.execute(
+                            f"DELETE FROM samples WHERE sha256 IN ({placeholders})",
+                            sorted(gold_labels),
+                        )
+                        conn_class.commit()
+                finally:
+                    conn_class.close()
         upsert_evidence(conn_dataset, evidence_rows)
         conn_dataset.commit()
     finally:

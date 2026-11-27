@@ -9,6 +9,7 @@ merged over the parser label so downstream fields such as `is_dotnet` and
 
 from __future__ import annotations
 
+import csv
 import json
 from pathlib import Path
 
@@ -18,9 +19,16 @@ DATA_DIR = ROOT / "Data"
 FAMILY_MAP = {
     "asyncrat": "AsyncRAT",
     "dcrat": "DcRat",
+    "darkcrystal": "DcRat",
     "njrat": "NjRAT",
+    "bladabindi": "NjRAT",
     "remcos": "Remcos",
+    "remvio": "Remcos",
+    "socmer": "Remcos",
     "quasarrat": "QuasarRAT",
+    "quasar": "QuasarRAT",
+    "cinarat": "QuasarRAT",
+    "yggdrasil": "QuasarRAT",
     "venomrat": "VenomRAT",
     "xworm": "XWorm",
     "xenorat": "XenoRat",
@@ -38,6 +46,15 @@ FAMILY_VERDICTS = frozenset({
 })
 
 STRENGTHS = frozenset({"strong", "medium", "weak"})
+LABEL_STATUSES = frozenset({
+    "verified", "verified_other", "unverified", "rejected_non_dotnet",
+    "rejected_hash_mismatch", "reference_only", "review", "benign",
+})
+GOLD_COLUMNS = (
+    "sha256", "cluster_id", "current_status", "current_family",
+    "gold_status", "gold_family", "confidence", "analyst", "date",
+    "notes", "evidence",
+)
 
 
 def canonical_family(raw) -> str:
@@ -91,3 +108,35 @@ def load_final_label(sha256: str, data_dir: Path | None = None) -> dict:
             f"missing final label for {sha256}: looked for {label_path} and {aggregate_path}"
         )
     return fields
+
+
+def load_gold_labels(data_dir: Path | None = None) -> dict[str, dict]:
+    """Read Data/Gold/gold.csv, if it exists.
+
+    Human fields may be blank.  A non-empty `gold_status` is validated against
+    the fixed vocabulary and a non-empty `gold_family` against the family map.
+    """
+    base = Path(data_dir) if data_dir is not None else DATA_DIR
+    path = base / "Gold" / "gold.csv"
+    if not path.is_file():
+        return {}
+    result: dict[str, dict] = {}
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        missing = {"sha256", "gold_status", "gold_family"} - set(reader.fieldnames or [])
+        if missing:
+            raise RuntimeError(f"gold CSV missing columns: {sorted(missing)}")
+        for line_number, row in enumerate(reader, start=2):
+            sha256 = str(row.get("sha256") or "").strip()
+            if not sha256:
+                continue
+            if sha256 in result:
+                raise RuntimeError(f"duplicate gold row for {sha256} at line {line_number}")
+            status = str(row.get("gold_status") or "").strip()
+            if status and status not in LABEL_STATUSES:
+                raise RuntimeError(f"unknown gold_status {status!r} at line {line_number}")
+            family = str(row.get("gold_family") or "").strip()
+            if family:
+                canonical_family(family)
+            result[sha256] = {"gold_status": status, "gold_family": family}
+    return result

@@ -19,11 +19,18 @@ ROOT = SCRIPT_DIR.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from Tools._label_common import FAMILY_VERDICTS, STRENGTHS, canonical_family  # noqa: E402
+from Tools._label_common import (  # noqa: E402
+    FAMILY_VERDICTS,
+    LABEL_STATUSES,
+    STRENGTHS,
+    canonical_family,
+    load_gold_labels,
+)
 
 DEFAULT_DATA = ROOT / "Data"
 STRENGTH_RANK = {"strong": 3, "medium": 2, "weak": 1}
-REQUIRED_VOTERS = ("rat_king_parser", "own_yara")
+REQUIRED_VOTERS = ("rat_king_parser", "own_yara", "elastic", "malpedia",
+                   "malwarebazaar", "detect_it_easy", "yaraify")
 
 
 def write_json(path: Path, payload: dict) -> None:
@@ -71,11 +78,16 @@ def read_evidence(evidence_dir: Path, sha256: str) -> list[dict]:
 def _vote(evidence: dict) -> dict:
     raw_verdict = str(evidence.get("verdict") or "")
     verdict = "no_match" if raw_verdict == "no_match" else canonical_family(raw_verdict)
+    raw = evidence.get("raw")
+    scope = "family"
+    if isinstance(raw, dict):
+        scope = str(raw.get("scope") or "family")
     return {
         "source": str(evidence.get("source") or ""),
         "independence_group": str(evidence.get("independence_group") or ""),
         "verdict": verdict,
         "strength": str(evidence.get("strength") or ""),
+        "scope": scope,
     }
 
 
@@ -138,9 +150,12 @@ def aggregate(label_fields: dict, evidence_rows: list[dict],
 
     # Rule 6: contradiction is any family disagreement at or above the
     # configured strength.  Absence (no_match) is not a contradiction.
+    # Lineage votes (own YARA) support AsyncRAT but must not contradict a
+    # family-specific fork vote.  Only family-scoped votes can contradict.
+    family_positives = [vote for vote in positives if vote["scope"] != "lineage"]
     threshold_families = {
         vote["verdict"]
-        for vote in positives
+        for vote in family_positives
         if STRENGTH_RANK[vote["strength"]] >= threshold
     }
     reason["groups"] = {
@@ -188,8 +203,40 @@ def aggregate(label_fields: dict, evidence_rows: list[dict],
         family = next(iter(group_support))
         return {"lbl_sts": "unverified", "sug_fam": family,
                 "lbl_src": "auto_aggregator", "lbl_reason": reason}
+    # A lineage AsyncRAT group plus one family-scoped fork group is not a
+    # contradiction; keep the fork as the suggested family for partitioning.
+    non_async = [family for family in group_support if family != "AsyncRAT"]
+    if len(non_async) == 1:
+        return {"lbl_sts": "unverified", "sug_fam": non_async[0],
+                "lbl_src": "auto_aggregator", "lbl_reason": reason}
     return {"lbl_sts": "unverified", "sug_fam": "",
             "lbl_src": "auto_aggregator", "lbl_reason": reason}
+
+
+def apply_gold_override(result: dict, gold_row: dict | None) -> dict:
+    """Rule 10: a human gold label overrides the aggregator result."""
+    if not gold_row or not gold_row.get("gold_status"):
+        return result
+    status = str(gold_row["gold_status"])
+    if status not in LABEL_STATUSES:
+        raise RuntimeError(f"invalid gold status: {status}")
+    family = str(gold_row.get("gold_family") or "").strip()
+    if status == "verified":
+        family = ""
+    elif status == "benign":
+        family = "Benign"
+    elif family:
+        family = canonical_family(family)
+    if status == "verified_other" and not family:
+        raise RuntimeError("gold verified_other requires a gold_family")
+    updated = dict(result)
+    updated["lbl_sts"] = status
+    updated["sug_fam"] = family
+    updated["lbl_src"] = "human_gold"
+    reason = dict(updated.get("lbl_reason") or {})
+    reason["gold_override"] = {"gold_status": status, "gold_family": family}
+    updated["lbl_reason"] = reason
+    return updated
 
 
 def main() -> int:
@@ -212,6 +259,7 @@ def main() -> int:
     label_files = sorted(labels_dir.glob("*.json"))
     if not label_files:
         raise RuntimeError(f"no label JSONs in {labels_dir}")
+    gold_labels = load_gold_labels(data_root)
 
     counts: Counter = Counter()
     families: Counter = Counter()
@@ -228,6 +276,7 @@ def main() -> int:
             raise RuntimeError(f"label JSON in {path} has no fields object")
         evidence = read_evidence(evidence_dir, sha256)
         result = aggregate(fields, evidence, args.contradiction_min_strength)
+        result = apply_gold_override(result, gold_labels.get(sha256))
         write_json(aggregate_dir / f"{sha256}.json", {
             "schema_version": 1,
             "sha256": sha256,

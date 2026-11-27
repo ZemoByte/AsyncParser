@@ -57,6 +57,7 @@ match; the synthetic test in `tests/test_own_yara.py` proves this.
 - The 3 non-.NET matches contain 7–8 wide AsyncRAT strings but no CLR header;
   aggregator rule 1 still labels them `rejected_non_dotnet`.
 - The 13 `review` matches are AsyncRAT-derived forks (XWorm, DcRat, VenomRAT,
-  QuasarRAT). The rule is a lineage detector, not a family discriminator; a
-  second family-specific voter is needed before `verified_other` can be
-  produced.
+  QuasarRAT). The rule is a lineage detector, not a family discriminator.
+- After adding `scope=lineage` and the Elastic/Malpedia family voters, 9 XWorm
+  forks became `verified_other`; 1 DcRat/VenomRAT conflict remains `review`.
+  DcRat/QuasarRAT need a second family-scoped voter before promotion.
