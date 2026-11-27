@@ -1,0 +1,1 @@
+{"fields": {"values": ["advapi32.dll!DuplicateToken", "advapi32.dll!LogonUser", "advapi32.dll!OpenThreadToken", "advapi32.dll!RevertToSelf", "advapi32.dll!SetThreadToken", "kernel32.dll!CloseHandle", "kernel32.dll!GetCurrentThread"]}, "kind": "ImplMap", "producer": "impl_map", "schema_version": 1, "sha256": "e34ef07be1e6de192e007fa59413c9f07657d9d24ebb59b2049d3447ccc73110"}

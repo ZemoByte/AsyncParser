@@ -611,3 +611,93 @@ After the remaining voters:
   demonstrated until they exist.
 - Gold rows are not hand-labeled; the audit precision/recall table is pending.
 - No commits.
+
+## 39. Phase 0 finish — correctness, doc accuracy, benign data (2026-11-27)
+
+### Q94 — `is_gold` semantics
+
+- `is_gold=1` only when `gold_status` is non-empty. A blank row is a gold
+  **candidate**, not a gold row.
+- Blank candidates stay in their class DB; only filled gold rows are removed.
+- `gold_flags()` and `target_class_for_row()` make the rule testable.
+- Final: 380 rows, `is_gold=0`, class DBs 58 / 9 / 210.
+
+### Q95 — `results.md` correction
+
+- The Phase 0.5 voter table was joined to the final `lbl_sts`, not to the
+  pre-aggregation labels.
+- Actual: own YARA AsyncRAT 73 → 58 verified, 1 review, 2 unverified,
+  9 verified_other, 3 rejected_non_dotnet; Elastic AsyncRAT 45 → 45 verified;
+  Malpedia AsyncRAT 59 → 58 verified + 1 unverified; MB 165 weak; DIE and
+  YARAify 0 family.
+- Phase 0.4 section is marked **SUPERSEDED BY PHASE 0.5**.
+
+### Q96 — persisted vote scope
+
+- `label_evidence.scope TEXT`; values are `lineage` or `family`.
+- Attribute evidence (DIE) is stored as `family` because it cannot promote a
+  family; `raw.scope` keeps the original `attribute` value.
+- Backfilled from evidence JSONs on the importer run: 2,660 rows, 649 lineage,
+  2,011 family, 0 NULL.
+
+### Q97 — one PE/CLR parser
+
+- `Tools/_pe.py` is the single `is_dotnet` implementation.
+- `Tools/Labeling/labeler.py` and `Tools/_carver_common.py` import it; the
+  duplicate bodies were deleted.
+- Synthetic tests cover valid .NET PE, native PE, truncated file, non-MZ file.
+
+### Q98 — threshold sweep
+
+`--threshold` was added to the clusterer (default 100). On the final 380
+samples, writing to `/tmp/opencode/clusters_380_<n>`:
+
+| threshold | clusters | largest | singletons | multi | mixed |
+|---:|---:|---:|---:|---:|---:|
+| 25 | 277 | 46 | 243 | 34 | 0 |
+| 50 | 241 | 56 | 200 | 41 | 0 |
+| 100 | 94 | 78 | 61 | 33 | 0 |
+
+No cluster contains more than one known family at any threshold. The default
+stays 100 and `Data/Clusters` was not overwritten.
+
+### Q99 — dataset report
+
+- `Tools/Report/dataset_report.py` is read-only and prints Markdown.
+- It reports rows by status/family/class, size min/median/max and % .NET per
+  class, cluster stats, `lbl_src`, `is_gold`, filled gold rows, and the class
+  balance.
+- Final: 380 rows, 210 benign vs 67 positive; 94 clusters (33 multi, largest
+  78, 61 singletons, 0 mixed); Benign median 705 KiB vs AsyncRAT 45 KiB.
+
+### Q100 — benign collection and `--benign-only`
+
+- `Tools/BenignCollect/collect.py` supports `dotnet-sdk`, `nuget`,
+  `chocolatey`, `dike`; static PE/CLR filtering only; writes only
+  `Samples/Benign/` and `Data/BenignSources.csv`.
+- Dry run NuGet: 91 .NET PE candidates / 65 unique / 20 selected.
+- Dry run .NET SDK: 3,751 candidates / 3,152 unique / 20 selected.
+- 10-file live run then full collection: **200 collected (21 EXE, 179 DLL)**
+  plus 10 hand-built = **210 benign**. The SDK has only 21 .NET EXEs; DLLs
+  were included to reach the 200 target.
+- `labeler --benign-only` scans only `--benign-root`, never reads the ledger,
+  never runs rat-king-parser, leaves existing labels/evidence untouched, and
+  writes `.labeler.done` with the total label count (380).
+- Full pipeline after collection: 380 rows, 210 benign, 94 clusters,
+  2,660 evidence rows, class DBs 58 / 9 / 210, 0 NULL `cluster_id`.
+
+### Q101 — gold quota warning
+
+- `build_gold_set.py` prints each unmet quota and a substitution summary; the
+  selection rule is unchanged.
+- On the 380-row dataset: verified 8→3, review 7→1, 11 substituted rows
+  (benign 9, unverified 1, verified_other 1).
+- `Data/Gold/gold.csv` was not modified; all `gold_status` values are blank.
+
+### Remaining external gaps
+
+- `diec` is not installed, so `obf_lvl` remains `unknown` for all 380.
+- `YARAIFY_AUTH_KEY` is not used in this task (no API calls allowed), so
+  YARAify evidence is no_match.
+- The live MalwareBazaar ledger has no `signature`; MB evidence is weak-only.
+- The 30-row gold set is not hand-labeled; precision/recall audit is pending.

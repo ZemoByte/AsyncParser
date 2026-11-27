@@ -18,15 +18,25 @@ REPO = Path(__file__).resolve().parents[1]
 if str(REPO) not in sys.path:
     sys.path.insert(0, str(REPO))
 
-from Tools._label_common import canonical_family, load_final_label  # noqa: E402
-from Tools.Aggregator.aggregator import aggregate  # noqa: E402
+from Tools._label_common import (  # noqa: E402
+    canonical_family,
+    load_final_label,
+    load_gold_labels,
+)
+from Tools.Aggregator.aggregator import aggregate, apply_gold_override  # noqa: E402
 from Tools.Clustering import clusterer  # noqa: E402
 from Tools.Importer.importer import (  # noqa: E402
     collect_markers,
     ensure_evidence_table,
+    gold_flags,
+    persisted_scope,
     target_class_db,
+    target_class_for_row,
     upsert_evidence,
 )
+from Tools.Voters.Elastic.elastic_voter import families_for_rules  # noqa: E402
+from Tools.Voters.MalwareBazaar.mb_voter import families_from_tokens  # noqa: E402
+from Tools.Voters.YARAify.yaraify_voter import families_for_names  # noqa: E402
 
 
 def ev(source="voter", group="g1", verdict="AsyncRAT", strength="strong",
@@ -149,6 +159,16 @@ class AggregatorTests(unittest.TestCase):
         self.assertEqual(result["lbl_sts"], "unverified")
         self.assertEqual(result["sug_fam"], "AsyncRAT")
 
+    def test_review_prefers_family_scoped_family(self):
+        result = aggregate(label(), [
+            ev(group="own", verdict="AsyncRAT", strength="strong", scope="lineage"),
+            ev(group="mb", verdict="AsyncRAT", strength="weak", scope="lineage"),
+            ev(group="elastic", verdict="DcRat", strength="strong"),
+            ev(group="rat-king", verdict="VenomRAT", strength="strong"),
+        ])
+        self.assertEqual(result["lbl_sts"], "review")
+        self.assertEqual(result["sug_fam"], "DcRat")
+
     def test_rule8_benign_passthrough(self):
         result = aggregate(label(status="benign", family="Benign"), [ev()])
         self.assertEqual(result["lbl_sts"], "benign")
@@ -198,6 +218,20 @@ class ImporterTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             target_class_db({"lbl_sts": "verified_other", "sug_fam": "OtherMalware"})
 
+    def test_blank_gold_status_does_not_exclude(self):
+        is_gold, gold_fam = gold_flags({"gold_status": "", "gold_family": ""})
+        self.assertEqual((is_gold, gold_fam), (0, None))
+        label = {"lbl_sts": "verified", "sug_fam": ""}
+        self.assertEqual(target_class_for_row(label, is_gold), "AsyncRAT.db")
+
+    def test_filled_gold_status_excludes(self):
+        is_gold, gold_fam = gold_flags({
+            "gold_status": "verified_other", "gold_family": "XWorm",
+        })
+        self.assertEqual((is_gold, gold_fam), (1, "XWorm"))
+        label = {"lbl_sts": "verified_other", "sug_fam": "XWorm"}
+        self.assertIsNone(target_class_for_row(label, is_gold))
+
     def test_evidence_upsert_is_idempotent(self):
         conn = sqlite3.connect(":memory:")
         try:
@@ -209,19 +243,27 @@ class ImporterTests(unittest.TestCase):
                 "independence_group": "yara:rat-king",
                 "verdict": "AsyncRAT",
                 "strength": "strong",
+                "scope": "lineage",
                 "raw": "{}",
                 "observed_at": "2026-01-01T00:00:00+00:00",
             }
             upsert_evidence(conn, [row])
-            upsert_evidence(conn, [dict(row, strength="medium", verdict="XWorm")])
+            upsert_evidence(conn, [dict(row, strength="medium", verdict="XWorm",
+                                      scope="family")])
             count = conn.execute("SELECT COUNT(*) FROM label_evidence").fetchone()[0]
             self.assertEqual(count, 1)
-            verdict, strength = conn.execute(
-                "SELECT verdict, strength FROM label_evidence"
+            verdict, strength, scope = conn.execute(
+                "SELECT verdict, strength, scope FROM label_evidence"
             ).fetchone()
-            self.assertEqual((verdict, strength), ("XWorm", "medium"))
+            self.assertEqual((verdict, strength, scope), ("XWorm", "medium", "family"))
         finally:
             conn.close()
+
+    def test_scope_normalization(self):
+        self.assertEqual(persisted_scope({"scope": "lineage"}), "lineage")
+        self.assertEqual(persisted_scope({"scope": "family"}), "family")
+        self.assertEqual(persisted_scope({"scope": "attribute"}), "family")
+        self.assertEqual(persisted_scope(None), "family")
 
     def test_collect_markers_requires_evidence_and_skips_empty_class(self):
         with tempfile.TemporaryDirectory() as temp:
@@ -233,8 +275,9 @@ class ImporterTests(unittest.TestCase):
             (root / "Aggregated" / ".aggregator.done").write_text("done")
             with self.assertRaises(RuntimeError):
                 collect_markers(root)
-            (root / "Evidence" / ".rat_king_parser.done").write_text("done")
-            (root / "Evidence" / ".own_yara.done").write_text("done")
+            for source in ("rat_king_parser", "own_yara", "elastic", "malpedia",
+                           "malwarebazaar", "detect_it_easy", "yaraify"):
+                (root / "Evidence" / f".{source}.done").write_text("done")
             collect_markers(root)  # must not raise on the empty OtherMalwares folder
 
     def test_read_evidence_and_coverage(self):
@@ -243,7 +286,8 @@ class ImporterTests(unittest.TestCase):
             sha = "b" * 64
             source_dir = root / sha
             source_dir.mkdir()
-            for source in ("rat_king_parser", "own_yara"):
+            for source in ("rat_king_parser", "own_yara", "elastic", "malpedia",
+                           "malwarebazaar", "detect_it_easy", "yaraify"):
                 payload = {
                     "schema_version": 1,
                     "sha256": sha,
@@ -255,7 +299,7 @@ class ImporterTests(unittest.TestCase):
             # read_evidence lives in the aggregator, not the importer.
             from Tools.Aggregator.aggregator import read_evidence as read_agg
             rows = read_agg(root, sha)
-            self.assertEqual(len(rows), 2)
+            self.assertEqual(len(rows), 7)
             (source_dir / "own_yara.json").unlink()
             with self.assertRaises(RuntimeError):
                 from Tools.Importer.importer import read_evidence_rows
@@ -308,6 +352,74 @@ class FinalLabelTests(unittest.TestCase):
         self.assertEqual(canonical_family(""), "")
         with self.assertRaises(RuntimeError):
             canonical_family("unknown-family")
+
+
+class GoldAndVoterTests(unittest.TestCase):
+    def test_gold_loader_blank_and_filled(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            gold_dir = root / "Gold"
+            gold_dir.mkdir()
+            (gold_dir / "gold.csv").write_text(
+                "sha256,gold_status,gold_family\n"
+                f"{'e' * 64},,\n"
+                f"{'f' * 64},verified_other,XWorm\n",
+                encoding="utf-8",
+            )
+            gold = load_gold_labels(root)
+            self.assertEqual(gold["e" * 64]["gold_status"], "")
+            self.assertEqual(gold["f" * 64]["gold_status"], "verified_other")
+            self.assertEqual(gold["f" * 64]["gold_family"], "XWorm")
+
+    def test_gold_loader_rejects_duplicate_and_unknown_status(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            gold_dir = root / "Gold"
+            gold_dir.mkdir()
+            (gold_dir / "gold.csv").write_text(
+                "sha256,gold_status,gold_family\n"
+                f"{'a' * 64},verified,\n"
+                f"{'a' * 64},verified,\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(RuntimeError):
+                load_gold_labels(root)
+            (gold_dir / "gold.csv").write_text(
+                "sha256,gold_status,gold_family\n"
+                f"{'b' * 64},not_a_status,\n",
+                encoding="utf-8",
+            )
+            with self.assertRaises(RuntimeError):
+                load_gold_labels(root)
+
+    def test_gold_override(self):
+        base = aggregate(label(), [ev(group="g1")])
+        result = apply_gold_override(base, {
+            "gold_status": "verified_other", "gold_family": "XWorm",
+        })
+        self.assertEqual(result["lbl_sts"], "verified_other")
+        self.assertEqual(result["sug_fam"], "XWorm")
+        self.assertEqual(result["lbl_src"], "human_gold")
+        self.assertIn("gold_override", result["lbl_reason"])
+
+    def test_malwarebazaar_aliases(self):
+        self.assertEqual(families_from_tokens(["AsyncRAT"]), ["AsyncRAT"])
+        self.assertEqual(families_from_tokens(["Quasar"]), ["QuasarRAT"])
+        self.assertEqual(families_from_tokens(["unknown"]), [])
+
+    def test_elastic_rule_name_mapping(self):
+        self.assertEqual(
+            families_for_rules(["Windows_Trojan_Asyncrat_11a11ba1"]),
+            ["AsyncRAT"],
+        )
+        self.assertEqual(
+            families_for_rules(["Windows_Trojan_XWorm_732e6c12"]),
+            ["XWorm"],
+        )
+
+    def test_yaraify_rule_name_mapping(self):
+        self.assertEqual(families_for_names(["MALWARE_Win_AsyncRAT"]), ["AsyncRAT"])
+        self.assertEqual(families_for_names(["generic_rule"]), [])
 
 
 if __name__ == "__main__":

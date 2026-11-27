@@ -71,7 +71,7 @@ lineage signal.
 - `medium`: MB `signature`, a generic YARA rule, config/default-value match.
 - `weak`: MB tags, `vendor_intel`, ClamAV labels, hash lookups.
 
-**Gold set [DECIDED]:** about 30 samples hand-labeled in dnSpyEx, selected by **cluster** (not file) and stratified across `verified`, `review`, `unverified`, `benign`, `rejected_non_dotnet`. Stored in `Data/Gold/gold.csv`; the importer adds `is_gold` and `gold_family`; gold rows stay in `DataSet.db` only and are excluded from every split and from the class DBs. Used only to audit voter precision/recall, not to train. Freeze the SHA-256 list before labeling.
+**Gold set [DECIDED]:** about 30 samples hand-labeled in dnSpyEx, selected by **cluster** (not file) and stratified across `verified`, `review`, `unverified`, `benign`, `rejected_non_dotnet`. Stored in `Data/Gold/gold.csv`; the importer adds `is_gold` and `gold_family`. Only a row with a **non-empty `gold_status`** is gold; blank candidates stay in their class DB. Filled gold rows stay in `DataSet.db` only and are excluded from every split and from the class DBs. Used only to audit voter precision/recall, not to train. Freeze the SHA-256 list before labeling.
 
 **Manifest columns to add:** `label_status` (`verified | verified_other | unverified | rejected_non_dotnet | rejected_hash_mismatch | reference_only | needs_human_review | benign`), `label_source` (`auto_aggregator | human_gold | parser_only | hand_benign`), `suggested_family`, `obfuscation_level`, `label_reason` (JSON), `is_gold`, `gold_family` (DB column `gold_fam`), config columns (hosts, ports, mutex, key, salt). Short DB names are in `Docs/SHORT_NAMES.md`.
 
@@ -157,9 +157,9 @@ Report the **abstain rate per class** next to accuracy (e.g. "abstained on 40% o
 
 ## 11. Build order (each step has a check)
 1. **[DONE]** Append-only download ledger `Tools/MBDownloader/samples.db` and label vocabulary (including `benign`) are defined; separate `Data/*.db` files created by the importer.
-2. **[PARTIAL]** Label evidence: `rat_king_parser` + own YARA voters work; the aggregator writes final labels. MalwareBazaar metadata and DIE are not built. → check: labels byte-identical after the labeler, parser exceptions captured in `config.parse_error`.
-2b. **[PARTIAL]** Seven voters + aggregator + `label_evidence` + gold template done; DIE/YARAify external gaps and human gold labels remain. → check: 1260 evidence rows; 58 `verified`, 9 `verified_other`, 1 `review`; `OtherMalwares.db` 8 rows after gold exclusion; tests 36/36.
-3. **[PARTIAL]** Clusters are built (45 clusters, 14 multi-member, 0 mixed-family); benign .NET and other-RAT negatives are still thin. Splits not built. → check: no cluster spans splits; cluster counts reported.
+2. **[PARTIAL]** Label evidence: all seven voters work; the aggregator writes final labels. DIE has no `diec` binary and YARAify has no key in this run. → check: labels byte-identical after the labeler, parser exceptions captured in `config.parse_error`.
+2b. **[PARTIAL]** Seven voters + aggregator + `label_evidence` + gold template done; DIE/YARAify external gaps and human gold labels remain. → check: 2660 evidence rows; 58 `verified`, 9 `verified_other`, 1 `review`; class DBs 58/9/210; tests 47/47.
+3. **[PARTIAL]** Clusters are built (94 clusters, 33 multi-member, 0 mixed-family); benign .NET is now 210 (200 collected, 21 EXE + 179 DLL); other-RAT negatives are still thin. Splits not built. → check: no cluster spans splits; cluster counts reported.
 4. **[PARTIAL]** Five Layer A carvers exist (`ImportTable`, `TypeRef`, `MemberRef`, `AssemblyRef`, `ImplMap`); the training-only vocabulary (`Docs/vocab.json`) is not fitted until splits exist.
 5. **[NOT STARTED]** LightGBM + TLSH kNN + trivial baseline → check: `Docs/results.md` with confusion matrices and per-class coverage.
 6. **[NOT STARTED]** Abstention gate with data-calibrated thresholds → check: abstain rates reported.
@@ -180,13 +180,14 @@ Report the **abstain rate per class** next to accuracy (e.g. "abstained on 40% o
 - `Tools/_carver_common.py` plus `ImportTable`, `TypeRef`, `MemberRef`, `AssemblyRef`, `ImplMap`: one carver per folder, each writes `Data/<Class>/<Tool>/<sha256>.json` plus `.done`.
 - `Tools/Importer/importer.py`: creates `Data/DataSet.db` and class DBs, auto-`ALTER`s columns, imports labels and carved JSONs, enforces markers and schema version, deletes markers after success, and places rows by label.
 - Synthetic tests: `/tmp/opencode/test_labeler.py`, `/tmp/opencode/test_importer.py`. **Verified after the clean rerun (read-only):** `DataSet.db` 180 rows, `AsyncRAT.db` 48 rows, `Benign.db` 10 rows, `OtherMalwares.db` absent, all carving columns present, 0 `.done` markers left (`Docs/DECISIONS.md` §33).
+- **Superseded by the Phase 0 finish run (2026-11-27):** `DataSet.db` 380 rows, `AsyncRAT.db` 58, `OtherMalwares.db` 9, `Benign.db` 210; 94 clusters; `is_gold=0`; 2660 evidence rows. See `Docs/results.md` and `Docs/DECISIONS.md` §39.
 
 **Not done yet:**
-- Obfuscator fingerprint detection: two markers implemented (`ConfusedByAttribute`, `LoGiCdotNetAttribute`); no matches in 180 samples. DIE (`diec -j -d -e`) is the planned replacement for `obf_lvl`; it is not installed yet.
-- Label evidence: all seven voters + aggregator + `label_evidence` are built. Real gaps: `diec` not installed (`obf_lvl` unknown), `YARAIFY_AUTH_KEY` not set, MB ledger has no `signature`, and the 30-row gold set is not hand-labeled. See `Docs/results.md`.
+- Obfuscator fingerprint detection: two markers implemented (`ConfusedByAttribute`, `LoGiCdotNetAttribute`); no matches in 380 samples. DIE (`diec -j -d -e`) is the planned replacement for `obf_lvl`; it is not installed yet.
+- Label evidence: all seven voters + aggregator + `label_evidence` are built. Real gaps: `diec` not installed (`obf_lvl` unknown), `YARAIFY_AUTH_KEY` not used in this task, MB ledger has no `signature`, and the 30-row gold set is not hand-labeled. P2.1 collected 200 benign (21 EXE/179 DLL) + 10 hand-built = 210; final dataset 380 rows. See `Docs/results.md`.
 - Reference archive contents inspection and mapping. `Reference/AsyncRAT-C-Sharp` is a gitignored source checkout; `Reference/vx-underground` and `Reference/Ultimate-Rat-Collection` hold the builder archives/READMEs (not extracted or run); `Reference/Elastic` and `Reference/Malpedia` hold the local YARA rules. CAPE is no longer planned (superseded by the independent voters; do not add it unless it can run standalone).
 - Layer A extractor and `Docs/vocab.json`; LightGBM, TLSH kNN and trivial baseline; `Docs/results.md`.
-- Clusters: `Tools/Clustering/clusterer.py` implemented; `cluster_id` populated (45 clusters, 14 multi-member, 0 mixed-family). The fresh-run union-guard bug is fixed (see `Docs/DECISIONS_PART2.md`). Temporal splits still pending.
+- Clusters: `Tools/Clustering/clusterer.py` implemented; `cluster_id` populated (94 clusters, 33 multi-member, 0 mixed-family after the benign expansion; 45 before). The fresh-run union-guard bug is fixed (see `Docs/DECISIONS_PART2.md`). Threshold sweep 100/50/25 is in `Docs/results.md`. Temporal splits still pending.
 - Abstention thresholds, ablations, ~20-sample dnSpyEx human check, Stage 2 explainer templates, `Docs/limitations.md`.
 - Neural encoder / language-model explainer (stretch only).
 - Live verification: **AUTHORIZED by user** (`Docs/DECISIONS.md` §35); network is available in the VM and the user accepts real sample downloads. Not yet executed. Synthetic mocked-API tests already cover 429 / cap / error-limit / single-pass / Ctrl+C (12/12 downloader tests). Use `MB_AUTH_KEY` securely; never print or log it.

@@ -1,0 +1,1 @@
+{"fields": {"cluster_id": "1ff17273c1a3a120bc617878cc1f40ab33dd509cee2b7d243d8b3e419ac0846d", "config_keys": {}, "is_dotnet": true, "tlsh": "T1AFD4E05153DE509DB262B65ADD28BE09BCBB79FE3F66831E10182D6F35F2010C639326"}, "kind": "cluster", "producer": "clusterer", "schema_version": 1, "sha256": "e5a99f1bb322ac49fd5522aaf369ad4c8781573c1ba4098b6b6c5501d12dfaf2"}

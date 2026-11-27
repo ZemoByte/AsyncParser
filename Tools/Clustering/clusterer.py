@@ -116,11 +116,13 @@ def main() -> int:
     parser.add_argument("--samples-root", type=Path, default=DEFAULT_SAMPLES)
     parser.add_argument("--labels-root", type=Path, default=DEFAULT_LABELS)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
+    parser.add_argument("--threshold", type=int, default=TLSH_THRESHOLD)
     args = parser.parse_args()
 
     samples_root = args.samples_root.resolve()
     labels_root = args.labels_root.resolve()
     out_root = args.out.resolve()
+    threshold = args.threshold
 
     sample_list = []
     for class_dir in (samples_root / "AsyncRAT",
@@ -190,7 +192,7 @@ def main() -> int:
             tls_match = False
             if a in hashes and b in hashes:
                 try:
-                    if tlsh.diff(hashes[a], hashes[b]) <= TLSH_THRESHOLD:
+                    if tlsh.diff(hashes[a], hashes[b]) <= threshold:
                         tls_match = True
                 except Exception:
                     pass

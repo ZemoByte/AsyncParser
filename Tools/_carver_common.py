@@ -8,17 +8,7 @@ import json
 import os
 from pathlib import Path
 
-import pefile
-
-
-def is_dotnet(path: Path) -> bool:
-    try:
-        pe = pefile.PE(str(path), fast_load=True)
-        pe.parse_data_directories()
-        data_directory = pe.OPTIONAL_HEADER.DATA_DIRECTORY
-        return len(data_directory) > 14 and data_directory[14].Size > 0
-    except Exception:
-        return False
+from Tools._pe import is_dotnet
 
 
 def sha256_file(path: Path) -> str:

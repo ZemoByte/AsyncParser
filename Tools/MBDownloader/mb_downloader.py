@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import argparse
 import hashlib
 import json
 import os
@@ -21,6 +22,10 @@ import pyzipper
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from Tools._label_common import FAMILY_MAP, FAMILY_VERDICTS  # noqa: E402
+
 SAMPLES_DIR = ROOT / "Samples"
 ASYNCRAT_DIR = SAMPLES_DIR / "AsyncRAT"
 OTHER_DIR = SAMPLES_DIR / "OtherMalwares"
@@ -44,6 +49,10 @@ EXT_BY_TYPE = {
 }
 
 STOP = {"requested": False, "in_run": False}
+RAT_TAG_ALIASES = {
+    alias for alias, canonical in FAMILY_MAP.items()
+    if canonical in FAMILY_VERDICTS
+}
 
 
 class ApiError(Exception):
@@ -463,17 +472,21 @@ def tags_to_csv(tags) -> str:
     return str(tags or "")
 
 
-def composite_tag(tag: str, secondary_tag: str, wildcard_extra: bool = False) -> str:
+def composite_tag(tag: str, secondary_tag: str, wildcard_extra: bool = False,
+                  tag_mode: str = "exact") -> str:
     parts = [tag]
     if secondary_tag:
         parts.append(secondary_tag)
     if wildcard_extra:
         parts.append("*")
+    if tag_mode == "contains":
+        parts.append("contains")
     return ",".join(parts)
 
 
 def sample_passes(tags_csv: str, search_tag: str, file_type: str,
-                  secondary_tag: str = "", wildcard_extra: bool = False) -> bool:
+                  secondary_tag: str = "", wildcard_extra: bool = False,
+                  tag_mode: str = "exact") -> bool:
     lowered = [item.strip().lower() for item in tags_csv.split(",") if item.strip()]
     lowered = [TYPE_ALIASES.get(item, item) for item in lowered]
     if search_tag.lower() not in lowered:
@@ -481,6 +494,12 @@ def sample_passes(tags_csv: str, search_tag: str, file_type: str,
     types = [item for item in lowered if item in EXT_BY_TYPE]
     if len(types) != 1 or types[0] != file_type:
         return False
+    if tag_mode == "contains":
+        other_rat = {
+            item for item in lowered
+            if item in RAT_TAG_ALIASES and item != search_tag.lower()
+        }
+        return not other_rat
     if secondary_tag == "*":
         return True
     if secondary_tag:
@@ -494,31 +513,39 @@ def sample_passes(tags_csv: str, search_tag: str, file_type: str,
 
 def build_candidates(temp_conn: sqlite3.Connection, main_conn: sqlite3.Connection,
                      tag: str, file_type: str, secondary_tag: str = "",
-                     wildcard_extra: bool = False) -> tuple:
+                     wildcard_extra: bool = False,
+                     tag_mode: str = "exact") -> tuple:
     rows = temp_conn.execute(
         "SELECT sha256_hash, tag, file_type, first_seen FROM poll_cache"
     ).fetchall()
     filtered = []
     skipped = []
+    skips = []
     rejected = 0
     for sha, tags_csv, api_type, first_seen in rows:
-        if not sample_passes(tags_csv, tag, file_type, secondary_tag, wildcard_extra):
+        if not sample_passes(tags_csv, tag, file_type, secondary_tag,
+                             wildcard_extra, tag_mode):
             rejected += 1
+            skips.append((sha, tags_csv, "tag_filter"))
             continue
         if normalize_type(api_type) != file_type:
             skipped.append((sha, str(api_type or "missing")))
+            skips.append((sha, tags_csv, f"file_type:{api_type or 'missing'}"))
             continue
         filtered.append((sha, normalize_first_seen(first_seen)))
     known = {row[0] for row in main_conn.execute(
         "SELECT sha256_hash FROM downloads WHERE status IN ('success', 'adopted')")}
     duplicates = sum(1 for item in filtered if item[0] in known)
+    for sha, _seen in filtered:
+        if sha in known:
+            skips.append((sha, "", "duplicate"))
     fresh = [item for item in filtered if item[0] not in known]
 
     cursor = main_conn.execute(
         "SELECT first_seen, sha256_hash FROM downloads "
         "WHERE tag_rule = ? AND status IN ('success', 'adopted') "
         "ORDER BY first_seen DESC, sha256_hash DESC LIMIT 1",
-        (composite_tag(tag, secondary_tag, wildcard_extra),)
+        (composite_tag(tag, secondary_tag, wildcard_extra, tag_mode),)
     ).fetchone()
     cursor_key = (normalize_first_seen(cursor[0]), cursor[1] or "") if cursor else ("", "")
 
@@ -527,7 +554,8 @@ def build_candidates(temp_conn: sqlite3.Connection, main_conn: sqlite3.Connectio
     for group in (new, backlog):
         group.sort(key=lambda item: (item[1], item[0]))
     return {"new": new, "backlog": backlog, "skipped": skipped,
-            "rows": len(rows), "rejected": rejected, "duplicates": duplicates}
+            "skips": skips, "rows": len(rows), "rejected": rejected,
+            "duplicates": duplicates}
 
 
 # --------------------------------------------------------------- download I/O
@@ -590,13 +618,14 @@ def cleanup_temp() -> None:
 
 def run_poll_loop(auth_key: str, tag: str, dest_dir: Path, file_types: list,
                   rate: int, main_conn: sqlite3.Connection,
-                  secondary_tag: str = "", wildcard_extra: bool = False) -> None:
+                  secondary_tag: str = "", wildcard_extra: bool = False,
+                  tag_mode: str = "exact") -> None:
     ensure_dir(TEMP_DIR)
     if COMPARISON_DB.exists():
         COMPARISON_DB.unlink()
     temp_conn = sqlite3.connect(COMPARISON_DB)
     init_temp_db(temp_conn)
-    rule = composite_tag(tag, secondary_tag, wildcard_extra)
+    rule = composite_tag(tag, secondary_tag, wildcard_extra, tag_mode)
     console("START", f"tag={rule} main={tag} "
             f"secondary={secondary_tag or '-'} "
             f"wildcard_extra={'yes' if wildcard_extra else 'no'} "
@@ -653,12 +682,12 @@ def run_poll_loop(auth_key: str, tag: str, dest_dir: Path, file_types: list,
                 if STOP["requested"]:
                     raise StopRun("Ctrl+C")
                 result = build_candidates(temp_conn, main_conn, tag, file_type,
-                                          secondary_tag, wildcard_extra)
-                for sha256, api_type in result["skipped"]:
-                    log_session(temp_conn, sha256, tag, api_type, "skipped",
-                                f"unsupported API file_type: {api_type}",
-                                secondary_tag=secondary_tag, wildcard_extra=wildcard_extra,
-                                tag_rule=rule)
+                                          secondary_tag, wildcard_extra, tag_mode)
+                for sha256, tags_csv, reason in result["skips"]:
+                    log_session(temp_conn, sha256, tag, file_type, "skipped",
+                                reason, secondary_tag=secondary_tag,
+                                wildcard_extra=wildcard_extra,
+                                api_tags=tags_csv, tag_rule=rule)
                 console("FILTER", f"rows={result['rows']} drop={result['rejected']} "
                         f"dup={result['duplicates']} bad_type={len(result['skipped'])} "
                         f"new={len(result['new'])} backlog={len(result['backlog'])}")
@@ -771,7 +800,41 @@ def _record_failure(temp_conn, sha256, file_type, tag, message,
 
 # ---------------------------------------------------------------------- main
 
+def backfill_signature(conn: sqlite3.Connection) -> None:
+    ensure_column(conn, "downloads", "signature", "TEXT")
+    has_poll = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='poll_cache'"
+    ).fetchone()
+    if has_poll:
+        conn.execute(
+            "UPDATE downloads SET signature = ("
+            "SELECT signature FROM poll_cache p "
+            "WHERE p.sha256_hash = downloads.sha256_hash"
+            ") WHERE signature IS NULL"
+        )
+    conn.commit()
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description="MalwareBazaar downloader")
+    parser.add_argument("--tag-mode", choices=("exact", "contains"),
+                        default="exact")
+    parser.add_argument("--migrate-signature", action="store_true")
+    args = parser.parse_args()
+
+    if args.migrate_signature:
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            init_main_db(conn)
+            backfill_signature(conn)
+            count = conn.execute(
+                "SELECT COUNT(*) FROM downloads WHERE signature IS NOT NULL"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+        console("MIGRATE", f"downloads.signature backfilled; non-null={count}")
+        return
+
     auth_key = load_auth_key()
     ensure_dir(TEMP_DIR)
     for directory in (ASYNCRAT_DIR, OTHER_DIR, BENIGN_DIR):
@@ -826,7 +889,7 @@ def main() -> None:
             STOP["in_run"] = True
             try:
                 run_poll_loop(auth_key, tag, dest_dir, file_types, rate, main_conn,
-                              secondary_tag, wildcard_extra)
+                              secondary_tag, wildcard_extra, args.tag_mode)
             except StopRun:
                 return
             except KeyboardInterrupt:

@@ -1,0 +1,1 @@
+{"fields": {"values": ["kernel32.dll!DebugBreak", "kernel32.dll!IsDebuggerPresent"]}, "kind": "ImplMap", "producer": "impl_map", "schema_version": 1, "sha256": "396e5f1e09b0e96ae1d4b6f33c4adf41529e0e13d74c267f39e6f901c503d28a"}

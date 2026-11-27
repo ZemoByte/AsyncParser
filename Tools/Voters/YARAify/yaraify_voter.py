@@ -111,7 +111,7 @@ def lookup(sha256: str, auth_key: str, timeout: int) -> tuple[str, dict]:
     names = collect_names(payload)
     families = families_for_names(names)
     raw = {
-        "scope": "family",
+        "scope": "lineage" if "AsyncRAT" in families else "family",
         "origin": "yaraify",
         "query_status": payload.get("query_status") if isinstance(payload, dict) else None,
         "rule_names": names[:50],

@@ -150,9 +150,19 @@ def aggregate(label_fields: dict, evidence_rows: list[dict],
 
     # Rule 6: contradiction is any family disagreement at or above the
     # configured strength.  Absence (no_match) is not a contradiction.
-    # Lineage votes (own YARA) support AsyncRAT but must not contradict a
-    # family-specific fork vote.  Only family-scoped votes can contradict.
+    # Lineage votes (own YARA/Elastic/Malpedia AsyncRAT) support AsyncRAT but
+    # must not contradict a family-specific fork vote.  Only family-scoped
+    # votes can contradict or promote a non-AsyncRAT family.
     family_positives = [vote for vote in positives if vote["scope"] != "lineage"]
+    family_group_support: dict[str, set[str]] = {}
+    for vote in family_positives:
+        group = vote["independence_group"]
+        families = group_families.get(group, set())
+        if len(families) != 1:
+            continue
+        family = next(iter(families))
+        if vote["verdict"] == family and vote["strength"] in {"strong", "medium"}:
+            family_group_support.setdefault(family, set()).add(group)
     threshold_families = {
         vote["verdict"]
         for vote in family_positives
@@ -171,10 +181,15 @@ def aggregate(label_fields: dict, evidence_rows: list[dict],
             suggested_family = non_async[0]
         else:
             best = sorted(
-                group_support,
-                key=lambda family: (-len(group_support[family]), family),
+                family_group_support,
+                key=lambda family: (-len(family_group_support[family]), family),
             )
-            suggested_family = best[0] if best else suggested
+            if best:
+                suggested_family = best[0]
+            elif threshold_families:
+                suggested_family = sorted(threshold_families)[0]
+            else:
+                suggested_family = suggested
         return {"lbl_sts": "review", "sug_fam": suggested_family,
                 "lbl_src": "auto_aggregator", "lbl_reason": reason}
 
@@ -183,9 +198,10 @@ def aggregate(label_fields: dict, evidence_rows: list[dict],
         return {"lbl_sts": "verified", "sug_fam": "",
                 "lbl_src": "auto_aggregator", "lbl_reason": reason}
 
-    # Rule 5: verified_other is the same rule for one non-AsyncRAT family.
+    # Rule 5: verified_other needs two family-scoped groups for one non-AsyncRAT
+    # family.  Lineage AsyncRAT votes do not count for or against it.
     other = [
-        (family, groups) for family, groups in group_support.items()
+        (family, groups) for family, groups in family_group_support.items()
         if family != "AsyncRAT" and len(groups) >= 2
     ]
     if len(other) == 1:

@@ -12,6 +12,7 @@ import argparse
 import csv
 import sqlite3
 import sys
+from collections import Counter
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -48,7 +49,7 @@ def read_rows(dataset_path: Path) -> list[dict]:
         conn.close()
 
 
-def build_selection(rows: list[dict]) -> list[dict]:
+def build_selection(rows: list[dict]) -> tuple[list[dict], dict[str, int]]:
     clusters: dict[str, list[dict]] = {}
     for row in rows:
         clusters.setdefault(row["cluster_id"], []).append(row)
@@ -57,6 +58,7 @@ def build_selection(rows: list[dict]) -> list[dict]:
 
     selected: list[dict] = []
     used: set[str] = set()
+    quota_counts: dict[str, int] = {}
 
     def pick(status: str) -> dict | None:
         for cluster_id in sorted(clusters):
@@ -75,6 +77,7 @@ def build_selection(rows: list[dict]) -> list[dict]:
                 break
             selected.append(item)
             used.add(item["cluster_id"])
+            quota_counts[status] = quota_counts.get(status, 0) + 1
 
     # Fill any shortfall from remaining clusters, preferring harder rows.
     preference = ["review", "verified", "unverified", "benign", "rejected_non_dotnet"]
@@ -92,7 +95,7 @@ def build_selection(rows: list[dict]) -> list[dict]:
         )
         selected.append(members[0])
         used.add(cluster_id)
-    return selected
+    return selected, quota_counts
 
 
 def main() -> int:
@@ -108,7 +111,15 @@ def main() -> int:
     if out_path.is_file() and not args.force:
         raise RuntimeError(f"gold CSV already exists: {out_path}; use --force to overwrite")
     rows = read_rows(data_root / "DataSet.db")
-    selected = build_selection(rows)
+    selected, quota_counts = build_selection(rows)
+    for status, quota in QUOTAS:
+        got = quota_counts.get(status, 0)
+        if got < quota:
+            print(f"WARNING: quota {status} {quota} not met (selected {got})")
+    substituted = selected[sum(quota_counts.values()):]
+    if substituted:
+        print(f"WARNING: substituted {len(substituted)} rows for unmet quotas: "
+              f"{dict(sorted(Counter(item['lbl_sts'] for item in substituted).items()))}")
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with out_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=GOLD_COLUMNS)

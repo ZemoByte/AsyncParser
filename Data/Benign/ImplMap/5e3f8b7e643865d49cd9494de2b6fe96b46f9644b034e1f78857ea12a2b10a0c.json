@@ -1,0 +1,1 @@
+{"fields": {"values": ["user32.dll!GetWindowPlacement", "user32.dll!SetWindowPlacement"]}, "kind": "ImplMap", "producer": "impl_map", "schema_version": 1, "sha256": "5e3f8b7e643865d49cd9494de2b6fe96b46f9644b034e1f78857ea12a2b10a0c"}

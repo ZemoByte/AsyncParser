@@ -292,7 +292,8 @@ These five were labelled Q11–Q15 when asked in chat, but Q11–Q18 already exi
 ### Label-evidence follow-up (2026-11-27)
 
 - The HIGH hard-negative finding is resolved and tested on real data: independent-voter aggregator + `verified_other` routing (`Docs/DECISIONS.md` §36-38, `Docs/Plan.md` §4). Result: 9 XWorm `verified_other` rows.
-- `OtherMalwares.db` has 8 rows after gold exclusion (9 before); `review` still stays in `DataSet.db` only. The one remaining review is a real Elastic DcRat vs rat-king VenomRAT conflict.
+- `OtherMalwares.db` has 9 rows; blank gold candidates are not excluded until `gold_status` is filled. `review` still stays in `DataSet.db` only. The one remaining review is a real Elastic DcRat vs rat-king VenomRAT conflict.
 - Pipeline order is now `labeler -> voters -> aggregator -> clusterer -> carvers -> importer`. The clusterer reads the final label through `Tools/_label_common.load_final_label`, so `verified_other` families stay partitioned.
+- After the P2.1 benign expansion: 380 rows, 210 benign, 94 clusters, 2,660 evidence rows; malware labels unchanged (58 `verified`, 9 `verified_other`, 1 `review`).
 - Two proposed voters are excluded to avoid label leakage: PE/.NET metadata (Layer A features) and TLSH-to-reference (kNN feature). Config/default-value checks, YARA strings, MB metadata and DIE are safe.
 - The MalwareBazaar voter is implemented and run; the live ledger has no `signature` column and empty `api_tags`, so its evidence is weak-only until a backfill.

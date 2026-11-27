@@ -9,6 +9,7 @@ Data/Labels/. It never writes to the ledger.
 from __future__ import annotations
 
 import argparse
+import csv
 import hashlib
 import json
 import os
@@ -17,8 +18,6 @@ import subprocess
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
-
-import pefile
 
 try:
     import dnfile
@@ -73,6 +72,7 @@ DEFAULT_OUT = ROOT / "Data"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from Tools._label_common import canonical_family  # noqa: E402
+from Tools._pe import is_dotnet  # noqa: E402
 
 EVIDENCE_RAW_LIMIT = 1000
 
@@ -89,14 +89,6 @@ def parser_version() -> str:
     if len(parts) < 2:
         raise RuntimeError("could not read rat-king-parser version")
     return parts[-1]
-def is_dotnet(path: Path) -> bool:
-    try:
-        pe = pefile.PE(str(path), fast_load=True)
-        pe.parse_data_directories()
-        data_directory = pe.OPTIONAL_HEADER.DATA_DIRECTORY
-        return len(data_directory) > 14 and data_directory[14].Size > 0
-    except Exception:
-        return False
 
 
 def map_config(raw) -> dict | None:
@@ -204,6 +196,101 @@ def write_evidence(out_root: Path, sha256: str, source_version: str, verdict: st
     write_json(out_root / "Evidence" / sha256 / "rat_king_parser.json", payload)
 
 
+def load_benign_manifest(path: Path) -> dict[str, dict]:
+    manifest: dict[str, dict] = {}
+    if not path.is_file():
+        return manifest
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            sha256 = str(row.get("sha256") or "").strip()
+            if not sha256:
+                continue
+            manifest[sha256] = {
+                "origin": str(row.get("origin") or row.get("source") or "unknown"),
+                "ext": str(row.get("ext") or ""),
+            }
+    return manifest
+
+
+def benign_only(args) -> int:
+    """Label only Samples/Benign; no ledger read, no parser, no truncation."""
+    benign_root = args.benign_root.resolve()
+    out_root = args.out.resolve()
+    labels_dir = out_root / "Labels"
+    evidence_dir = out_root / "Evidence"
+    labels_dir.mkdir(parents=True, exist_ok=True)
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+
+    manifest = load_benign_manifest(out_root / "BenignSources.csv")
+    written = 0
+    if benign_root.is_dir():
+        for path in sorted(benign_root.iterdir()):
+            if not path.is_file():
+                continue
+            sha256 = hashlib.sha256(path.read_bytes()).hexdigest()
+            label_path = labels_dir / f"{sha256}.json"
+            evidence_path = evidence_dir / sha256 / "rat_king_parser.json"
+            entry = manifest.get(sha256, {})
+            origin = str(entry.get("origin") or "unknown")
+            ext = str(entry.get("ext") or path.suffix.lower())
+            sample_kind = "exe" if ext == ".exe" else ("dll" if ext == ".dll" else "other")
+            is_net = is_dotnet(path)
+            status = "benign" if is_net else "rejected_non_dotnet"
+            suggested = "Benign" if is_net else ""
+            if label_path.is_file():
+                payload = json.loads(label_path.read_text(encoding="utf-8"))
+                fields = payload.setdefault("fields", {})
+                if fields.get("origin") != origin or fields.get("kind") != sample_kind:
+                    fields["origin"] = origin
+                    fields["kind"] = sample_kind
+                    write_json(label_path, payload)
+                    written += 1
+            else:
+                payload = {
+                    "schema_version": 1,
+                    "sha256": sha256,
+                    "kind": "label",
+                    "producer": "labeler",
+                    "fields": {
+                        "sha256": sha256,
+                        "lbl_sts": status,
+                        "sug_fam": suggested,
+                        "is_dotnet": is_net,
+                        "obf_lvl": "unknown",
+                        "parser_version": "",
+                        "config": None,
+                        "origin": origin,
+                        "kind": sample_kind,
+                    },
+                }
+                write_json(label_path, payload)
+                written += 1
+            if not evidence_path.is_file():
+                raw = {"reason": "benign_not_parsed" if is_net else "not_dotnet"}
+                write_evidence(out_root, sha256, "benign-only", "no_match",
+                               "strong", raw)
+                written += 1
+
+    total_labels = len(list(labels_dir.glob("*.json")))
+    total_evidence = len(list(evidence_dir.glob("*/rat_king_parser.json")))
+    (labels_dir / ".labeler.done").write_text(
+        json.dumps({"producer": "labeler", "count": total_labels,
+                    "mode": "benign-only"}, sort_keys=True),
+        encoding="utf-8",
+    )
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    (evidence_dir / ".rat_king_parser.done").write_text(
+        json.dumps({"producer": "voter:rat_king_parser",
+                    "source_version": "benign-only", "count": total_evidence},
+                   sort_keys=True),
+        encoding="utf-8",
+    )
+    print(f"benign-only: wrote {written} files, total labels {total_labels}, "
+          f"total evidence {total_evidence}")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Label downloaded samples")
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
@@ -211,7 +298,12 @@ def main() -> int:
     parser.add_argument("--benign-root", type=Path, default=DEFAULT_SAMPLES / "Benign")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--benign-only", action="store_true",
+                        help="label Samples/Benign only; no ledger, no parser")
     args = parser.parse_args()
+
+    if args.benign_only:
+        return benign_only(args)
 
     samples_root = args.samples_root.resolve()
     benign_root = args.benign_root.resolve()

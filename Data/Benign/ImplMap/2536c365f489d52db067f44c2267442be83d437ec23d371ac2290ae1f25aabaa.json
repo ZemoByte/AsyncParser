@@ -1,0 +1,1 @@
+{"fields": {"values": ["winhttp.dll!WinHttpCloseHandle", "winhttp.dll!WinHttpGetIEProxyConfigForCurrentUser", "winhttp.dll!WinHttpGetProxyForUrl", "winhttp.dll!WinHttpOpen"]}, "kind": "ImplMap", "producer": "impl_map", "schema_version": 1, "sha256": "2536c365f489d52db067f44c2267442be83d437ec23d371ac2290ae1f25aabaa"}

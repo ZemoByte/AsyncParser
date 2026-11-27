@@ -87,7 +87,7 @@ def main() -> int:
             verdict = "no_match"
             strength = "weak"
         raw = match_summary(matches)
-        raw["scope"] = "family"
+        raw["scope"] = "lineage" if "AsyncRAT" in families else "family"
         raw["families"] = families
         if len(families) > 1:
             raw["reason"] = "multiple_families"

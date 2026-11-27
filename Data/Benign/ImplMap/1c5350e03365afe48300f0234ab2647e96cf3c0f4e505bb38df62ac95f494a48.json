@@ -1,0 +1,1 @@
+{"fields": {"values": ["kernel32.dll!ReadFile"]}, "kind": "ImplMap", "producer": "impl_map", "schema_version": 1, "sha256": "1c5350e03365afe48300f0234ab2647e96cf3c0f4e505bb38df62ac95f494a48"}

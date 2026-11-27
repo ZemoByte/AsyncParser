@@ -1,0 +1,1 @@
+{"fields": {"values": ["System.Collections", "System.Collections.Concurrent", "System.Collections.Immutable", "System.Memory", "System.Reflection.Metadata", "System.Runtime", "System.Runtime.InteropServices", "System.Threading"]}, "kind": "AssemblyRef", "producer": "assembly_ref", "schema_version": 1, "sha256": "4d8cea64fc8c6d4db0e9e417571e4d1708b508bec4cf92f4f32320cf2933c714"}

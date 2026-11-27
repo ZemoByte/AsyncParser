@@ -1,0 +1,352 @@
+{
+  "header": "DIAGNOSTIC ONLY \u2014 dataset gate failed; not a result",
+  "gate_pass": false,
+  "loco": {
+    "triggered": false,
+    "train_clusters": 52
+  },
+  "models": [
+    {
+      "name": "majority",
+      "metrics": {
+        "rows": 29,
+        "positives": 1,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "confusion_matrix": [
+          [
+            28,
+            0
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "pr_auc": 0.034482758620689655,
+        "per_class": {
+          "0": {
+            "precision": 0.9655172413793104,
+            "recall": 1.0,
+            "f1": 0.9824561403508771,
+            "support": 28
+          },
+          "1": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 1
+          }
+        },
+        "ci": {
+          "precision": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "recall": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "f1": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "pr_auc": [
+            0.07404412617625895,
+            0.016666666666666666,
+            0.2461538461538461
+          ]
+        }
+      }
+    },
+    {
+      "name": "logistic_structural",
+      "metrics": {
+        "rows": 29,
+        "positives": 1,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "confusion_matrix": [
+          [
+            28,
+            0
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "pr_auc": 0.045454545454545456,
+        "per_class": {
+          "0": {
+            "precision": 0.9655172413793104,
+            "recall": 1.0,
+            "f1": 0.9824561403508771,
+            "support": 28
+          },
+          "1": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 1
+          }
+        },
+        "ci": {
+          "precision": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "recall": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "f1": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "pr_auc": [
+            0.15550593083897746,
+            0.018518518518518517,
+            0.5942857142857142
+          ]
+        }
+      }
+    },
+    {
+      "name": "tlsh_knn",
+      "metrics": {
+        "rows": 29,
+        "positives": 1,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "confusion_matrix": [
+          [
+            11,
+            17
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "pr_auc": 0.034482758620689655,
+        "per_class": {
+          "0": {
+            "precision": 0.9166666666666666,
+            "recall": 0.39285714285714285,
+            "f1": 0.55,
+            "support": 28
+          },
+          "1": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 1
+          }
+        },
+        "ci": {
+          "precision": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "recall": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "f1": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "pr_auc": [
+            0.07404412617625895,
+            0.016666666666666666,
+            0.2461538461538461
+          ]
+        }
+      }
+    },
+    {
+      "name": "lightgbm_full",
+      "metrics": {
+        "rows": 29,
+        "positives": 1,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "confusion_matrix": [
+          [
+            28,
+            0
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "pr_auc": 0.3333333333333333,
+        "per_class": {
+          "0": {
+            "precision": 0.9655172413793104,
+            "recall": 1.0,
+            "f1": 0.9824561403508771,
+            "support": 28
+          },
+          "1": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 1
+          }
+        },
+        "ci": {
+          "precision": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "recall": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "f1": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "pr_auc": [
+            0.4653377630121816,
+            0.2,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "lightgbm_capability_only",
+      "metrics": {
+        "rows": 29,
+        "positives": 1,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "confusion_matrix": [
+          [
+            28,
+            0
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "pr_auc": 0.3333333333333333,
+        "per_class": {
+          "0": {
+            "precision": 0.9655172413793104,
+            "recall": 1.0,
+            "f1": 0.9824561403508771,
+            "support": 28
+          },
+          "1": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 1
+          }
+        },
+        "ci": {
+          "precision": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "recall": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "f1": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "pr_auc": [
+            0.4653377630121816,
+            0.2,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "name": "lightgbm_structural_only",
+      "metrics": {
+        "rows": 29,
+        "positives": 1,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1": 0.0,
+        "confusion_matrix": [
+          [
+            10,
+            18
+          ],
+          [
+            1,
+            0
+          ]
+        ],
+        "pr_auc": 0.05,
+        "per_class": {
+          "0": {
+            "precision": 0.9090909090909091,
+            "recall": 0.35714285714285715,
+            "f1": 0.5128205128205128,
+            "support": 28
+          },
+          "1": {
+            "precision": 0.0,
+            "recall": 0.0,
+            "f1": 0.0,
+            "support": 1
+          }
+        },
+        "ci": {
+          "precision": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "recall": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "f1": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "pr_auc": [
+            0.2220912331488316,
+            0.018660968660968662,
+            1.0
+          ]
+        }
+      }
+    }
+  ]
+}

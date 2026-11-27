@@ -28,38 +28,40 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
   - [x] Cluster by TLSH distance (~100 threshold) + shared config keys (mutex, AES key, C2 host)
   - [x] Store `cluster_id` per sample
   - [x] This must happen before any split
-    - Result: 180 samples → 45 clusters, 14 multi-member, 0 mixed-family, 0 NULL `cluster_id`.
+    - Result at the time: 180 samples → 45 clusters, 14 multi-member, 0 mixed-family, 0 NULL `cluster_id`.
+    - After the benign expansion (380 samples): 94 clusters at threshold 100, 33 multi-member, 0 mixed-family; 100/50/25 sweep in `Docs/results.md`.
 
-- [ ] **0.3 — Benign .NET collection**
-  - [ ] You need hundreds of benign .NET executables
-    - Only 10 hand-built test PEs in `Samples/Benign/` so far.
-  - [ ] Sources: your own machine's `C:\Windows\Microsoft.NET\`, installed programs, NuGet packages compiled from source
+- [x] **0.3 — Benign .NET collection**
+  - [x] You need hundreds of benign .NET executables
+    - 200 collected from the .NET SDK (21 EXE + 179 DLL) + 10 hand-built = 210.
+  - [x] Sources: `dotnet-sdk`, `nuget`, `chocolatey`, `dike` (local benign folder only)
+    - `Tools/BenignCollect/collect.py`; no execution; writes only Samples/Benign and the CSV.
   - [x] Never from MalwareBazaar (it has no benign files)
     - Constraint respected.
 
 - [ ] **0.4 — Label evidence and aggregation**
   - Seven voters, aggregator, importer, tests and gold template are done.
     External gaps: `diec`, `YARAIFY_AUTH_KEY`, MB `signature`; gold is not hand-labeled.
-  - [x] Add `label_evidence` table (`sha256, source, source_version, independence_group, verdict, strength, raw, observed_at`)
-    - 1260 rows (7 voters × 180 samples).
+  - [x] Add `label_evidence` table (`sha256, source, source_version, independence_group, verdict, strength, scope, raw, observed_at`)
+    - 2660 rows (7 voters × 380 samples); scope 649 lineage + 2011 family.
   - [x] Voter 1: own YARA rules derived from the AsyncRAT source (strings, not Layer A metadata)
     - `Tools/Voters/OwnYara/`; 13 strings, 4-of-13, benign hits 0. Source commit `0f0cba4`, reference-only.
   - [x] Voter 2: MalwareBazaar metadata (`signature` medium; tags/vendor_intel/ClamAV weak)
     - Implemented and run; ledger has no `signature`, so this run is weak-only (165 hits).
   - [x] Voter 3: Detect It Easy `diec -j -d -e` for `obf_lvl` only (not a family vote)
-    - Voter built and run; `diec` is not installed, so all 180 are `unknown`.
+    - Voter built and run; `diec` is not installed, so all 380 are `unknown`.
   - [x] Voter 4 (existing): `rat_king_parser`; no match is abstention, not a negative
-    - 180 evidence files; parser version 4.2.4.
+    - 380 evidence files; parser version 4.2.4; benign-only mode used for hand-supplied rows.
   - [x] Aggregator: `verified` = CLR + ≥2 independent strong/medium AsyncRAT agreements + no contradiction
-    - Real result: 58 `verified` (was 48); 3 of 45 clusters contain a verified AsyncRAT.
+    - Real result: 58 `verified` (was 48); 3 of 94 clusters contain a verified AsyncRAT.
   - [x] Aggregator: `verified_other` routing for XWorm/DcRat/QuasarRAT/VenomRAT/NjRAT/Remcos/XenoRat → `OtherMalwares.db`
-    - Real result: 9 XWorm `verified_other`; `OtherMalwares.db` 8 rows after gold exclusion.
+    - Real result: 9 XWorm `verified_other`; `OtherMalwares.db` 9 rows (gold candidates are not filled).
   - [x] Aggregator: `review` on contradiction; `unverified` on one/weak/no votes
     - Real result: 1 genuine review (`10102a03f784`, Elastic DcRat vs rat-king VenomRAT).
   - [x] Importer: add `lbl_src`, `lbl_reason`, `is_gold`, `gold_fam`; route `verified_other`
-  - [x] Tests inside the repo: `python3 tests/run_tests.py` → 36 pass
-  - [x] Gold template: 30 samples from 30 distinct clusters, `is_gold=1`, excluded from class DBs
-    - `Tools/Gold/README.md`; human fields are blank.
+  - [x] Tests inside the repo: `python3 tests/run_tests.py` → 47 pass
+  - [x] Gold template: 30 samples from 30 distinct clusters, all `is_gold=0` until filled
+    - `Tools/Gold/README.md`; human fields are blank; class DBs 58/9/210.
   - [ ] Hand-label the 30 gold rows in dnSpyEx, then run the audit
   - [ ] Audit: per-voter coverage/precision/recall/F1, contradiction rate, `obf_lvl` agreement → `Docs/results.md`
     - Coverage and contradiction report started; precision/recall need the hand-labeled gold set.
@@ -67,7 +69,7 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
     - Elastic 48 hits, Malpedia 71 hits; YARAify client built but no auth key in this run.
 
 - [ ] **Checkpoint:** `dataset.db` has every sample with `sha256`, `label_status`, `cluster_id`, `is_dotnet`, `label_source`
-  - `cluster_id` done (45 clusters, 0 NULL). `lbl_src` 170 `auto_aggregator` + 10 `hand_benign`; `is_gold` 150 × 0 + 30 × 1. Real labels: 58 `verified`, 9 `verified_other`, 71 `unverified`, 1 `review`, 31 `rejected_non_dotnet`, 10 `benign`.
+  - 380 rows, 94 clusters, 0 NULL. `lbl_src` 170 `auto_aggregator` + 210 `hand_benign`; `is_gold=0`. Final labels: 58 `verified`, 9 `verified_other`, 71 `unverified`, 1 `review`, 31 `rejected_non_dotnet`, 210 `benign`.
 
 ---
 
@@ -200,8 +202,11 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
 - [x] **Freeze the gold-set SHA-256 list** before hand-labeling, so the audit is not tuned on the same samples
   - `Data/Gold/gold.csv`, 30 clusters, human fields blank.
 - [ ] **Set `YARAIFY_AUTH_KEY`** to enable the YARAify hash lookup voter
+  - The user notes it is the same value as the MalwareBazaar key; it was not used because this task forbids MB/YARAify/Malpedia API calls.
 - [ ] **Hand-label the 30 gold rows** in dnSpyEx and run the precision/recall audit
 - [x] **Sketch `dataset.db` schema** on paper before coding
   - Recorded in `Docs/DECISIONS.md` §2.
-- [ ] **Collect 10–20 benign .NET exes** from your own machine to test the extractor
-  - Only 10 hand-built test PEs exist so far.
+- [x] **Collect benign .NET files** with `Tools/BenignCollect/collect.py`
+  - 200 collected (21 EXE, 179 DLL) + 10 hand-built = 210; `Data/BenignSources.csv` 200 rows.
+- [x] **Threshold sweep and dataset report**
+  - 100/50/25 sweep on 380 samples; `Tools/Report/dataset_report.py` output in `Docs/results.md`.

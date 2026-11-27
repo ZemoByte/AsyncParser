@@ -1,0 +1,1 @@
+{"fields": {"values": ["gdi32.dll!GetDeviceCaps", "user32.dll!GetCapture", "user32.dll!GetDC", "user32.dll!GetDoubleClickTime", "user32.dll!GetMonitorInfo", "user32.dll!MessageBeep", "user32.dll!MonitorFromRect", "user32.dll!ReleaseDC"]}, "kind": "ImplMap", "producer": "impl_map", "schema_version": 1, "sha256": "47f1a4189036e609ba540c8c647cebd05568ebf155c6ee80aa3749811c182879"}

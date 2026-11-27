@@ -29,6 +29,8 @@ DATA_DIR = ROOT / "Data"
 SAMPLES_DB = ROOT / "Tools" / "MBDownloader" / "samples.db"
 EVIDENCE_DIR = DATA_DIR / "Evidence"
 AGGREGATED_DIR = DATA_DIR / "Aggregated"
+STRUCTURE_DIR = DATA_DIR / "Structure"
+SPLITS_DIR = DATA_DIR / "Splits"
 SUPPORTED_SCHEMA_VERSION = 1
 TOOLS = ("ImportTable", "TypeRef", "MemberRef", "AssemblyRef", "ImplMap")
 REQUIRED_EVIDENCE_SOURCES = ("rat_king_parser", "own_yara", "elastic", "malpedia",
@@ -42,9 +44,17 @@ EVIDENCE_COLUMNS = {
     "independence_group": "TEXT",
     "verdict": "TEXT",
     "strength": "TEXT",
+    "scope": "TEXT",
     "raw": "TEXT",
     "observed_at": "TEXT",
 }
+
+
+def persisted_scope(raw) -> str:
+    """Store the decision scope. Attribute voters act as family voters."""
+    if isinstance(raw, dict) and str(raw.get("scope") or "") == "lineage":
+        return "lineage"
+    return "family"
 
 
 def target_class_db(label: dict) -> str | None:
@@ -61,6 +71,23 @@ def target_class_db(label: dict) -> str | None:
     if status == "benign" and suggested == "Benign":
         return "Benign.db"
     return None
+
+
+def gold_flags(gold_row: dict | None) -> tuple[int, str | None]:
+    """A row is gold only after a human fills gold_status."""
+    if not gold_row:
+        return 0, None
+    status = str(gold_row.get("gold_status") or "").strip()
+    is_gold = 1 if status else 0
+    family = str(gold_row.get("gold_family") or "").strip()
+    gold_fam = canonical_family(family) if family else None
+    return is_gold, gold_fam
+
+
+def target_class_for_row(label: dict, is_gold: int) -> str | None:
+    if is_gold:
+        return None
+    return target_class_db(label)
 
 
 def safe_column(name: str) -> str:
@@ -102,7 +129,7 @@ def ensure_evidence_table(conn: sqlite3.Connection) -> None:
         "CREATE TABLE IF NOT EXISTS label_evidence ("
         "sha256 TEXT NOT NULL, source TEXT NOT NULL, source_version TEXT NOT NULL, "
         "independence_group TEXT NOT NULL, verdict TEXT NOT NULL, strength TEXT NOT NULL, "
-        "raw TEXT, observed_at TEXT NOT NULL, "
+        "scope TEXT, raw TEXT, observed_at TEXT NOT NULL, "
         "PRIMARY KEY (sha256, source, source_version))"
     )
     for column, definition in EVIDENCE_COLUMNS.items():
@@ -114,11 +141,11 @@ def upsert_evidence(conn: sqlite3.Connection, rows: list[dict]) -> None:
     for row in rows:
         conn.execute(
             "INSERT OR REPLACE INTO label_evidence "
-            "(sha256, source, source_version, independence_group, verdict, strength, raw, observed_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "(sha256, source, source_version, independence_group, verdict, strength, scope, raw, observed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (row["sha256"], row["source"], row["source_version"],
              row["independence_group"], row["verdict"], row["strength"],
-             row["raw"], row["observed_at"]),
+             row["scope"], row["raw"], row["observed_at"]),
         )
     conn.commit()
 
@@ -161,6 +188,7 @@ def read_evidence_rows(evidence_dir: Path, active_shas: set[str]) -> list[dict]:
             observed_at = str(fields.get("observed_at") or "")
             if not observed_at:
                 raise RuntimeError(f"evidence JSON in {path} has no observed_at")
+            raw_value = fields.get("raw")
             rows.append({
                 "sha256": sha256,
                 "source": source,
@@ -168,7 +196,8 @@ def read_evidence_rows(evidence_dir: Path, active_shas: set[str]) -> list[dict]:
                 "independence_group": group,
                 "verdict": verdict,
                 "strength": strength,
-                "raw": json.dumps(fields.get("raw"), sort_keys=True),
+                "scope": persisted_scope(raw_value),
+                "raw": json.dumps(raw_value, sort_keys=True),
                 "observed_at": observed_at,
             })
 
@@ -214,6 +243,12 @@ def collect_markers(data_dir: Path = DATA_DIR) -> None:
     aggregate_marker = data_dir / "Aggregated" / ".aggregator.done"
     if not aggregate_marker.is_file():
         raise RuntimeError(f"missing done marker: {aggregate_marker}")
+    structure_dir = data_dir / "Structure"
+    if structure_dir.is_dir() and not (structure_dir / ".done").is_file():
+        raise RuntimeError(f"missing done marker: {structure_dir / '.done'}")
+    splits_dir = data_dir / "Splits"
+    if splits_dir.is_dir() and not (splits_dir / ".done").is_file():
+        raise RuntimeError(f"missing done marker: {splits_dir / '.done'}")
     clusters_dir = data_dir / "Clusters"
     if clusters_dir.is_dir() and not (clusters_dir / ".done").is_file():
         raise RuntimeError(f"missing done marker: {clusters_dir / '.done'}")
@@ -303,6 +338,24 @@ def main() -> int:
                     raise RuntimeError(f"duplicate carved JSON for {sha256}/{tool}")
                 carved[sha256][tool] = payload["fields"]
 
+    structure: dict[str, dict] = {}
+    if STRUCTURE_DIR.is_dir():
+        for path in sorted(STRUCTURE_DIR.glob("*.json")):
+            payload = read_json(path)
+            sha256 = str(payload["sha256"])
+            if sha256 not in samples:
+                raise RuntimeError(f"structure JSON for unknown sample: {sha256}")
+            structure[sha256] = payload["fields"]
+
+    splits: dict[str, dict] = {}
+    if SPLITS_DIR.is_dir():
+        for path in sorted(SPLITS_DIR.glob("*.json")):
+            payload = read_json(path)
+            sha256 = str(payload["sha256"])
+            if sha256 not in samples:
+                raise RuntimeError(f"split JSON for unknown sample: {sha256}")
+            splits[sha256] = payload["fields"]
+
     # Read cluster assignments (mandatory)
     clusters: dict[str, str] = {}
     clusters_dir = DATA_DIR / "Clusters"
@@ -328,9 +381,11 @@ def main() -> int:
         "target_class_db": "TEXT",
         "lbl_src": "TEXT", "lbl_reason": "TEXT",
         "is_gold": "INTEGER", "gold_fam": "TEXT",
+        "first_seen": "TEXT",
     }
     dataset_columns["cluster_id"] = "TEXT"
     dataset_columns["split"] = "TEXT"
+    dataset_columns["split_temporal"] = "TEXT"
     class_columns: dict[str, str] = {
         "sha256": "TEXT", "tag": "TEXT", "secondary_tag": "TEXT",
         "api_tags": "TEXT", "tag_rule": "TEXT", "file_type": "TEXT",
@@ -375,6 +430,12 @@ def main() -> int:
                     raise RuntimeError(f"conflicting field type for {column}")
                 field_types[column] = sqlite_type(value)
 
+        for key, value in structure.get(sha256, {}).items():
+            column = safe_column(f"structure_{key}")
+            if column in field_types and field_types[column] != sqlite_type(value):
+                raise RuntimeError(f"conflicting field type for {column}")
+            field_types[column] = sqlite_type(value)
+
     for column, definition in field_types.items():
         dataset_columns[column] = definition
 
@@ -401,6 +462,9 @@ def main() -> int:
         # Preserve split assignments across importer reruns.  A later split
         # tool owns the value; the importer must not erase it.
         existing_splits = dict(conn_dataset.execute("SELECT sha256, split FROM dataset"))
+        existing_temporal = dict(
+            conn_dataset.execute("SELECT sha256, split_temporal FROM dataset")
+        )
         ensure_evidence_table(conn_dataset)
         for sha256, sample in samples.items():
             if sample["status"] not in {"success", "adopted"}:
@@ -411,23 +475,22 @@ def main() -> int:
                     raise RuntimeError(f"missing label JSON for {sha256}")
                 label = labels[sha256]["fields"]
             label["sug_fam"] = canonical_family(label.get("sug_fam", ""))
-            gold = gold_labels.get(sha256)
-            is_gold = 1 if gold else 0
-            gold_fam = None
-            if gold and gold.get("gold_family"):
-                gold_fam = canonical_family(gold["gold_family"])
-            target_class = target_class_db(label)
+            is_gold, gold_fam = gold_flags(gold_labels.get(sha256))
             # Gold rows stay in DataSet.db only; they must never reach a class
             # DB or a training split.
-            if is_gold:
-                target_class = None
+            target_class = target_class_for_row(label, is_gold)
             row = {"sha256": sha256, "target_class_db": target_class}
             for key in ("lbl_sts", "sug_fam", "obf_lvl", "parser_version"):
                 row[safe_column(key)] = label.get(key, "")
             if sha256 in die_obf:
                 row["obf_lvl"] = die_obf[sha256]
             row["cluster_id"] = clusters[sha256]
-            row["split"] = existing_splits.get(sha256)
+            row["first_seen"] = sample.get("first_seen") or None
+            split_row = splits.get(sha256, {})
+            row["split"] = split_row.get("cluster_split", existing_splits.get(sha256))
+            row["split_temporal"] = split_row.get(
+                "temporal_split", existing_temporal.get(sha256)
+            )
             row["lbl_src"] = label.get("lbl_src") or (
                 "hand_benign" if label.get("lbl_sts") == "benign" else "parser_only"
             )
@@ -443,6 +506,8 @@ def main() -> int:
             for tool, fields in carved.get(sha256, {}).items():
                 for key, value in fields.items():
                     row[safe_column(f"{tool}_{key}")] = value if not isinstance(value, (dict, list)) else json.dumps(value)
+            for key, value in structure.get(sha256, {}).items():
+                row[safe_column(f"structure_{key}")] = value if not isinstance(value, (dict, list)) else json.dumps(value)
             columns = list(dataset_columns)
             placeholders = ",".join("?" for _ in columns)
             conn_dataset.execute(
@@ -478,10 +543,14 @@ def main() -> int:
                 conn_class.commit()
             finally:
                 conn_class.close()
-        # Gold rows must not remain in the class DBs from an earlier import.
-        # This is derived data only; sample files are never touched.
-        if gold_labels:
-            placeholders = ",".join("?" for _ in gold_labels)
+        # Only human-labelled gold rows must stay out of the class DBs.  Blank
+        # gold_status means the row is still a candidate, not a gold row.
+        gold_shas = sorted(
+            sha256 for sha256, row in gold_labels.items()
+            if str(row.get("gold_status") or "").strip()
+        )
+        if gold_shas:
+            placeholders = ",".join("?" for _ in gold_shas)
             for class_name in ("AsyncRAT.db", "OtherMalwares.db", "Benign.db"):
                 class_path = DATA_DIR / class_name
                 if not class_path.is_file():
@@ -494,7 +563,7 @@ def main() -> int:
                     if exists:
                         conn_class.execute(
                             f"DELETE FROM samples WHERE sha256 IN ({placeholders})",
-                            sorted(gold_labels),
+                            gold_shas,
                         )
                         conn_class.commit()
                 finally:

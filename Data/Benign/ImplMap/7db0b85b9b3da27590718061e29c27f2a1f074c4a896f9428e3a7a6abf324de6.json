@@ -1,0 +1,1 @@
+{"fields": {"values": ["Iphlpapi.dll!SendARP", "Ws2_32.dll!inet_addr", "kernel32.dll!GetVolumeInformation"]}, "kind": "ImplMap", "producer": "impl_map", "schema_version": 1, "sha256": "7db0b85b9b3da27590718061e29c27f2a1f074c4a896f9428e3a7a6abf324de6"}

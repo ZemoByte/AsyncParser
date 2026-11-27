@@ -1,0 +1,1 @@
+{"fields": {"cluster_split": "test", "degenerate": true, "temporal_split": "train"}, "kind": "split", "producer": "split", "schema_version": 1, "sha256": "5b6638bc7eea14f7199731d2ffd8e9704eb9a8e40fddd9f693b8caf5396cf15c"}

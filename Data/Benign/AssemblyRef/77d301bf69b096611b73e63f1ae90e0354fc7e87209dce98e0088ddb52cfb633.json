@@ -1,0 +1,1 @@
+{"fields": {"values": ["System", "System.Core", "System.Xml", "System.Xml.Linq", "mscorlib", "xunit.abstractions", "xunit.runner.utility.net452"]}, "kind": "AssemblyRef", "producer": "assembly_ref", "schema_version": 1, "sha256": "77d301bf69b096611b73e63f1ae90e0354fc7e87209dce98e0088ddb52cfb633"}
