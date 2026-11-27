@@ -9,40 +9,40 @@ from __future__ import annotations
 import json
 import os
 import sqlite3
+import sys
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from Tools._label_common import (  # noqa: E402
+    FAMILY_VERDICTS,
+    STRENGTHS,
+    canonical_family,
+    load_final_label,
+)
+
 DATA_DIR = ROOT / "Data"
 SAMPLES_DB = ROOT / "Tools" / "MBDownloader" / "samples.db"
+EVIDENCE_DIR = DATA_DIR / "Evidence"
+AGGREGATED_DIR = DATA_DIR / "Aggregated"
 SUPPORTED_SCHEMA_VERSION = 1
 TOOLS = ("ImportTable", "TypeRef", "MemberRef", "AssemblyRef", "ImplMap")
-FAMILY_MAP = {
-    "asyncrat": "AsyncRAT",
-    "dcrat": "DcRat",
-    "njrat": "NjRAT",
-    "remcos": "Remcos",
-    "quasarrat": "QuasarRAT",
-    "venomrat": "VenomRAT",
-    "xworm": "XWorm",
-    "xenorat": "XenoRat",
-    "othermalware": "OtherMalware",
-    "benign": "Benign",
-    "no match": "",
-    "": "",
-}
+REQUIRED_EVIDENCE_SOURCES = ("rat_king_parser", "own_yara")
 EXCLUDED_LABELS = {"unverified", "review", "rejected_non_dotnet",
                    "rejected_hash_mismatch", "reference_only"}
-
-
-def canonical_family(raw) -> str:
-    value = str(raw or "").strip()
-    if not value:
-        return ""
-    canonical = FAMILY_MAP.get(value.lower())
-    if canonical is None:
-        raise RuntimeError(f"unknown suggested family: {value}")
-    return canonical
+EVIDENCE_COLUMNS = {
+    "sha256": "TEXT",
+    "source": "TEXT",
+    "source_version": "TEXT",
+    "independence_group": "TEXT",
+    "verdict": "TEXT",
+    "strength": "TEXT",
+    "raw": "TEXT",
+    "observed_at": "TEXT",
+}
 
 
 def target_class_db(label: dict) -> str | None:
@@ -50,6 +50,12 @@ def target_class_db(label: dict) -> str | None:
     suggested = str(label.get("sug_fam") or "").strip()
     if status == "verified":
         return "AsyncRAT.db"
+    if status == "verified_other":
+        if suggested not in FAMILY_VERDICTS:
+            raise RuntimeError(
+                f"verified_other without a canonical family: {suggested!r}"
+            )
+        return "OtherMalwares.db"
     if status == "benign" and suggested == "Benign":
         return "Benign.db"
     return None
@@ -89,6 +95,93 @@ def ensure_table(conn: sqlite3.Connection, table: str, base_columns: dict[str, s
         ensure_column(conn, table, column, definition)
 
 
+def ensure_evidence_table(conn: sqlite3.Connection) -> None:
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS label_evidence ("
+        "sha256 TEXT NOT NULL, source TEXT NOT NULL, source_version TEXT NOT NULL, "
+        "independence_group TEXT NOT NULL, verdict TEXT NOT NULL, strength TEXT NOT NULL, "
+        "raw TEXT, observed_at TEXT NOT NULL, "
+        "PRIMARY KEY (sha256, source, source_version))"
+    )
+    for column, definition in EVIDENCE_COLUMNS.items():
+        ensure_column(conn, "label_evidence", column, definition)
+    conn.commit()
+
+
+def upsert_evidence(conn: sqlite3.Connection, rows: list[dict]) -> None:
+    for row in rows:
+        conn.execute(
+            "INSERT OR REPLACE INTO label_evidence "
+            "(sha256, source, source_version, independence_group, verdict, strength, raw, observed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (row["sha256"], row["source"], row["source_version"],
+             row["independence_group"], row["verdict"], row["strength"],
+             row["raw"], row["observed_at"]),
+        )
+    conn.commit()
+
+
+def read_evidence_rows(evidence_dir: Path, active_shas: set[str]) -> list[dict]:
+    if not evidence_dir.is_dir():
+        raise RuntimeError(f"missing evidence directory: {evidence_dir}")
+    rows = []
+    for source_dir in sorted(path for path in evidence_dir.iterdir() if path.is_dir()):
+        sha256 = source_dir.name
+        if sha256 not in active_shas:
+            continue
+        for path in sorted(source_dir.glob("*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError) as exc:
+                raise RuntimeError(f"invalid evidence JSON in {path}: {exc}") from exc
+            if not isinstance(payload, dict) or payload.get("kind") != "evidence":
+                raise RuntimeError(f"evidence JSON in {path} has wrong kind")
+            if str(payload.get("sha256") or "") != sha256:
+                raise RuntimeError(f"evidence sha256 mismatch in {path}")
+            fields = payload.get("fields")
+            if not isinstance(fields, dict):
+                raise RuntimeError(f"evidence JSON in {path} has no fields object")
+            source = str(fields.get("source") or "")
+            if source != path.stem:
+                raise RuntimeError(f"evidence source does not match filename: {path}")
+            source_version = str(fields.get("source_version") or "")
+            if not source_version:
+                raise RuntimeError(f"evidence JSON in {path} has no source_version")
+            group = str(fields.get("independence_group") or "")
+            if not group:
+                raise RuntimeError(f"evidence JSON in {path} has no independence_group")
+            verdict = str(fields.get("verdict") or "")
+            if verdict != "no_match" and verdict not in FAMILY_VERDICTS:
+                raise RuntimeError(f"invalid evidence verdict in {path}: {verdict}")
+            strength = str(fields.get("strength") or "")
+            if strength not in STRENGTHS:
+                raise RuntimeError(f"invalid evidence strength in {path}: {strength}")
+            observed_at = str(fields.get("observed_at") or "")
+            if not observed_at:
+                raise RuntimeError(f"evidence JSON in {path} has no observed_at")
+            rows.append({
+                "sha256": sha256,
+                "source": source,
+                "source_version": source_version,
+                "independence_group": group,
+                "verdict": verdict,
+                "strength": strength,
+                "raw": json.dumps(fields.get("raw"), sort_keys=True),
+                "observed_at": observed_at,
+            })
+
+    by_sample: dict[str, set[str]] = {}
+    for row in rows:
+        by_sample.setdefault(row["sha256"], set()).add(row["source"])
+    for sha256 in sorted(active_shas):
+        missing = set(REQUIRED_EVIDENCE_SOURCES) - by_sample.get(sha256, set())
+        if missing:
+            raise RuntimeError(
+                f"missing evidence for {sha256}: {', '.join(sorted(missing))}"
+            )
+    return rows
+
+
 def read_json(path: Path) -> dict:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -105,14 +198,30 @@ def read_json(path: Path) -> dict:
     return payload
 
 
-def collect_markers() -> None:
-    if (DATA_DIR / "Labels").is_dir() and not (DATA_DIR / "Labels" / ".labeler.done").is_file():
-        raise RuntimeError(f"missing done marker: {DATA_DIR / 'Labels' / '.labeler.done'}")
-    clusters_dir = DATA_DIR / "Clusters"
+def collect_markers(data_dir: Path = DATA_DIR) -> None:
+    labels_dir = data_dir / "Labels"
+    if labels_dir.is_dir() and not (labels_dir / ".labeler.done").is_file():
+        raise RuntimeError(f"missing done marker: {labels_dir / '.labeler.done'}")
+    evidence_dir = data_dir / "Evidence"
+    if not evidence_dir.is_dir():
+        raise RuntimeError(f"missing evidence directory: {evidence_dir}")
+    for source in REQUIRED_EVIDENCE_SOURCES:
+        marker = evidence_dir / f".{source}.done"
+        if not marker.is_file():
+            raise RuntimeError(f"missing voter marker: {marker}")
+    aggregate_marker = data_dir / "Aggregated" / ".aggregator.done"
+    if not aggregate_marker.is_file():
+        raise RuntimeError(f"missing done marker: {aggregate_marker}")
+    clusters_dir = data_dir / "Clusters"
     if clusters_dir.is_dir() and not (clusters_dir / ".done").is_file():
         raise RuntimeError(f"missing done marker: {clusters_dir / '.done'}")
-    for class_dir in (DATA_DIR / "AsyncRAT", DATA_DIR / "OtherMalwares", DATA_DIR / "Benign"):
+    for class_dir in (data_dir / "AsyncRAT", data_dir / "OtherMalwares",
+                      data_dir / "Benign"):
         if not class_dir.is_dir():
+            continue
+        # An empty class folder (for example OtherMalwares with no promoted
+        # rows yet) must not block the importer.
+        if not any(path.is_file() for path in class_dir.rglob("*")):
             continue
         for tool in TOOLS:
             marker = class_dir / tool / ".done"
@@ -153,6 +262,16 @@ def main() -> int:
             "status": "success",
         })
 
+    # Final labels: the aggregator overrides the parser label when present.
+    for sha256 in list(labels):
+        labels[sha256] = {"fields": load_final_label(sha256, DATA_DIR)}
+
+    active_shas = {
+        sha256 for sha256, sample in samples.items()
+        if sample["status"] in {"success", "adopted"}
+    }
+    evidence_rows = read_evidence_rows(EVIDENCE_DIR, active_shas)
+
     carved = {sha: {} for sha in samples}
     for class_dir in (DATA_DIR / "AsyncRAT", DATA_DIR / "OtherMalwares", DATA_DIR / "Benign"):
         if not class_dir.is_dir():
@@ -190,6 +309,8 @@ def main() -> int:
         "sha256": "TEXT", "lbl_sts": "TEXT", "sug_fam": "TEXT",
         "obf_lvl": "TEXT", "parser_version": "TEXT", "config": "TEXT",
         "target_class_db": "TEXT",
+        "lbl_src": "TEXT", "lbl_reason": "TEXT",
+        "is_gold": "INTEGER", "gold_fam": "TEXT",
     }
     dataset_columns["cluster_id"] = "TEXT"
     dataset_columns["split"] = "TEXT"
@@ -260,6 +381,10 @@ def main() -> int:
     conn_dataset = sqlite3.connect(dataset_path)
     try:
         ensure_table(conn_dataset, "dataset", dataset_columns)
+        # Preserve split assignments across importer reruns.  A later split
+        # tool owns the value; the importer must not erase it.
+        existing_splits = dict(conn_dataset.execute("SELECT sha256, split FROM dataset"))
+        ensure_evidence_table(conn_dataset)
         for sha256, sample in samples.items():
             if sample["status"] not in {"success", "adopted"}:
                 label = {"lbl_sts": "rejected_hash_mismatch", "sug_fam": "",
@@ -274,7 +399,13 @@ def main() -> int:
             for key in ("lbl_sts", "sug_fam", "obf_lvl", "parser_version"):
                 row[safe_column(key)] = label.get(key, "")
             row["cluster_id"] = clusters[sha256]
-            row["split"] = None
+            row["split"] = existing_splits.get(sha256)
+            row["lbl_src"] = label.get("lbl_src") or (
+                "hand_benign" if label.get("lbl_sts") == "benign" else "parser_only"
+            )
+            row["lbl_reason"] = label.get("lbl_reason")
+            row["is_gold"] = 0
+            row["gold_fam"] = None
             config = label.get("config", None)
             row["config"] = json.dumps(config) if isinstance(config, (dict, list)) else config
             for key, value in label.items():
@@ -319,6 +450,7 @@ def main() -> int:
                 conn_class.commit()
             finally:
                 conn_class.close()
+        upsert_evidence(conn_dataset, evidence_rows)
         conn_dataset.commit()
     finally:
         conn_dataset.close()

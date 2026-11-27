@@ -38,22 +38,29 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
     - Constraint respected.
 
 - [ ] **0.4 — Label evidence and aggregation**
-  - [ ] Add `label_evidence` table (`sha256, source, source_version, independence_group, verdict, strength, raw, observed_at`)
-  - [ ] Voter 1: own YARA rules derived from the AsyncRAT source/builder (strings, not Layer A metadata)
+  - Offline core done (rat-king + own YARA + aggregator + importer + tests);
+    MalwareBazaar/DIE/community voters and the gold set remain.
+  - [x] Add `label_evidence` table (`sha256, source, source_version, independence_group, verdict, strength, raw, observed_at`)
+  - [x] Voter 1: own YARA rules derived from the AsyncRAT source (strings, not Layer A metadata)
+    - `Tools/Voters/OwnYara/`; 13 strings, 4-of-13, benign hits 0. Source commit `0f0cba4`, reference-only.
   - [ ] Voter 2: MalwareBazaar metadata (`signature` medium; tags/vendor_intel/ClamAV weak)
     - Blocked: live `samples.db` has no `signature` column and empty `api_tags`; migrate first.
   - [ ] Voter 3: Detect It Easy `diec -j -d -e` for `obf_lvl` only (not a family vote)
-  - [ ] Voter 4 (existing): `rat_king_parser`; no match is abstention, not a negative
-  - [ ] Aggregator: `verified` = CLR + ≥2 independent strong/medium AsyncRAT agreements + no contradiction
-  - [ ] Aggregator: `verified_other` for XWorm/DcRat/QuasarRAT/VenomRAT/NjRAT/Remcos/XenoRat → `OtherMalwares.db`
-  - [ ] Aggregator: `review` on contradiction; `unverified` on one/weak/no votes
-  - [ ] Importer: add `lbl_src`, `lbl_reason`, `is_gold`, `gold_family`; route `verified_other`
+  - [x] Voter 4 (existing): `rat_king_parser`; no match is abstention, not a negative
+    - 180 evidence files; parser version 4.2.4.
+  - [x] Aggregator: `verified` = CLR + ≥2 independent strong/medium AsyncRAT agreements + no contradiction
+  - [x] Aggregator: `verified_other` routing for XWorm/DcRat/QuasarRAT/VenomRAT/NjRAT/Remcos/XenoRat → `OtherMalwares.db`
+    - Routing tested; 0 real rows because only rat-king votes on non-AsyncRAT families.
+  - [x] Aggregator: `review` on contradiction; `unverified` on one/weak/no votes
+  - [x] Importer: add `lbl_src`, `lbl_reason`, `is_gold`, `gold_fam`; route `verified_other`
+  - [x] Tests inside the repo: `python3 tests/run_tests.py` → 25 pass
   - [ ] Gold set: ~30 samples by cluster, hand-labeled in dnSpyEx, frozen before labeling, excluded from training
   - [ ] Audit: per-voter coverage/precision/recall/F1, contradiction rate, `obf_lvl` agreement → `Docs/results.md`
+    - Coverage and contradiction report started in `Docs/results.md`; precision/recall need the gold set.
   - [ ] Add Elastic (`Windows_Trojan_Asyncrat_11a11ba1`), Malpedia (`win.asyncrat`), YARAify `lookup_hash` as later voters
 
 - [ ] **Checkpoint:** `dataset.db` has every sample with `sha256`, `label_status`, `cluster_id`, `is_dotnet`, `label_source`
-  - `cluster_id` is done (45 clusters). `label_source`/`is_gold` are pending 0.4.
+  - `cluster_id` is done (45 clusters). `label_source`/`is_gold` are done (170 `auto_aggregator`, 10 `hand_benign`; 180 `is_gold=0`).
 
 ---
 

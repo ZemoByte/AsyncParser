@@ -346,3 +346,162 @@ Table lives in `Data/DataSet.db`. `raw` is a JSON summary (rule name, matched st
 - Recommended starting set: **four** voters — rat-king-parser (already implemented), own YARA, MalwareBazaar metadata, DIE. Without rat-king-parser the first run will produce almost no `verified` rows.
 - Build order: (1) fix the MB ledger `signature` column; (2) own YARA rules from the source strings; (3) DIE `obf_lvl`; (4) aggregator + `label_evidence`; (5) gold set; (6) Elastic/Malpedia/YARAify voters.
 - Keep the first run conservative: `verified` only on ≥2 `strong`/`medium` agreements; `verified_other` only with a canonical family; everything else stays `unverified`/`review`.
+
+## 37. Phase 0.4 offline core — implementation decisions (2026-11-27)
+
+Scope: evidence contract, rat-king voter, own-YARA voter, aggregator, importer
+routing, tests, real-data run, docs. No MalwareBazaar voter, no DIE, no
+Elastic/Malpedia/YARAify voter, no gold set, no carver/feature/vocabulary
+changes, no model code, no commits.
+
+### Q81 — Evidence contract
+
+- Path: `Data/Evidence/<sha256>/<source>.json`.
+- Envelope: `{"schema_version":1,"sha256","kind":"evidence","producer","fields"}`.
+- `fields`: `source`, `source_version`, `independence_group`, `verdict`,
+  `strength`, `raw`, `observed_at`.
+- `verdict` is a canonical family or `no_match`; `strength` is
+  `strong|medium|weak`; `raw` is a JSON summary capped at about 8 KB and never
+  contains sample bytes.
+- Done markers: `Data/Evidence/.rat_king_parser.done` and
+  `Data/Evidence/.own_yara.done`. The importer refuses to run without them.
+- The aggregator writes `Data/Aggregated/<sha256>.json` (kind `aggregate`) and
+  `Data/Aggregated/.aggregator.done`; the importer requires that marker too.
+
+### Q82 — rat-king voter
+
+- The labeler keeps its `Data/Labels/*.json` output byte-identical.
+- It additionally writes one `rat_king_parser` evidence file per target:
+  group `yara:rat-king`, strength `strong`, `source_version` = parser version.
+- The parser family is canonicalised through `Tools/_label_common.py`
+  (`canonical_family`); the map was moved there so the labeler, aggregator,
+  clusterer and importer share one copy.
+- `no_match` for empty/`No match`; parser error text is truncated to 1000
+  chars in `raw.config_error`; `raw.config_present` records whether a config
+  dict was returned.
+- Hand-supplied benign samples are not parsed; their rat-king evidence is
+  `no_match` with `raw.reason=benign_not_parsed`. Non-.NET samples use
+  `raw.reason=not_dotnet`.
+- No duplicate `is_dotnet` implementation was added.
+
+### Q83 — Own-YARA voter
+
+- Source: `Reference/AsyncRAT-C-Sharp/`, commit
+  `0f0cba4ec3985c38082c6abb3e1e01895120ffb6`, read as text only.
+- `Reference/` is gitignored; the user authorised the source download. The
+  main vx-underground page is Cloudflare-protected (403); the mirror
+  `mirrors.gpmidi.net/vx-underground/Builders/AsyncRAT/` was used to save the
+  version READMEs. Builder `.7z` archives are listed in
+  `Reference/README.md` but were **not** downloaded (they are builder binaries,
+  not source).
+- Rule: `Tools/Voters/OwnYara/asyncrat_own.yar`, 13 client strings, condition
+  `uint16(0) == 0x5A4D and 4 of them`, `wide ascii`.
+- Rejected strings and reasons are in `Tools/Voters/OwnYara/README.md`:
+  rat-king/Elastic overlaps, unconfigured-stub placeholders, DEBUG-only
+  defaults, ImplMap names, type-name strings.
+- `yara-python 4.5.4` is installed; no CLI wrapper was needed. The rule was
+  compiled and matched against a synthetic file before the real run.
+- The rule is a **lineage** detector: it also hits AsyncRAT-derived forks
+  (XWorm, DcRat, VenomRAT, QuasarRAT). Those become contradictions against the
+  rat-king family, not automatic AsyncRAT labels.
+
+### Q84 — Aggregator
+
+- `Tools/Aggregator/aggregator.py` implements Plan.md §4 rules 1-10.
+- Independence is counted by distinct `independence_group`, not by evidence
+  row. Two rules in the same group count once.
+- `no_match` is abstention; it never contradicts.
+- `contradiction_min_strength` defaults to `medium`; `weak` gives the strict
+  any-contradiction rule. A weak disagreement is recorded in `lbl_reason` but
+  does not override two strong groups.
+- On an AsyncRAT-vs-fork contradiction, `sug_fam` is set to the **non-AsyncRAT**
+  family. This keeps the clusterer from merging XWorm/DcRat/VenomRAT forks back
+  into the AsyncRAT partition. `lbl_sts` is still `review`.
+- Benign rows pass through with `lbl_src=hand_benign`; `reference_only` passes
+  through with `lbl_src=parser_only`.
+- Gold override (rule 10) is a stub: no gold file exists, so the aggregator
+  does not read or apply one.
+- `lbl_reason` contains `votes`, `groups`, `contradictions`, `abstentions`,
+  `evidence_count`, and `contradiction_min_strength`.
+
+### Q85 — Shared final label and importer
+
+- `Tools/_label_common.py` holds the family map and `load_final_label`.
+- `load_final_label` merges `Data/Aggregated/<sha>.json` over
+  `Data/Labels/<sha>.json`, so `is_dotnet`, `config` and `obf_lvl` survive.
+- The clusterer reads the final label through this loader; the importer does
+  the same.
+- Importer `label_evidence` table:
+  `sha256, source, source_version, independence_group, verdict, strength, raw, observed_at`,
+  primary key `(sha256, source, source_version)`, `INSERT OR REPLACE` upsert.
+- Importer adds `lbl_src`, `lbl_reason`, `is_gold` (0), `gold_fam` (NULL).
+- `target_class_db`: `verified_other` routes to `OtherMalwares.db`; a
+  `verified_other` row without a canonical family raises an error.
+- Empty class folders are skipped in `collect_markers`, so an empty
+  `Data/OtherMalwares` cannot block the importer.
+- Importer reruns now preserve existing `split` values instead of writing
+  NULL. This fixes the latent split-wipe found earlier.
+
+### Q86 — Tests
+
+- `tests/run_tests.py` is the one command. 25 tests pass.
+- Coverage: aggregator rules 1-10, abstention vs contradiction, weak-vs-strong
+  contradiction threshold, independence counting, `verified_other` routing,
+  no-family error, evidence upsert idempotency, marker requirement, empty class
+  folder skip, final-label merge, clusterer family read, own-YARA 4-of-13
+  threshold and benign-like non-match.
+- No tests existed in `/tmp/opencode` to copy (only a snapshot helper).
+
+### Q87 — Real-data run (2026-11-27)
+
+Before (45 clusters, previous labels):
+
+| lbl_sts | count |
+|---|---:|
+| verified | 48 |
+| unverified | 76 |
+| rejected_non_dotnet | 31 |
+| review | 15 |
+| benign | 10 |
+
+After:
+
+| lbl_sts | count |
+|---|---:|
+| verified | 48 |
+| unverified | 78 |
+| rejected_non_dotnet | 31 |
+| review | 13 |
+| benign | 10 |
+
+- `sug_fam` after: 146 none, 10 Benign, 9 XWorm, 9 AsyncRAT, 3 QuasarRAT,
+  2 DcRat, 1 VenomRAT.
+- Clusters containing at least one `verified` AsyncRAT: **2 of 45 before and
+  after**. The new voters confirm the existing 48 but do not add a second
+  independent voter for the 9 own-YARA-only AsyncRAT samples, so cluster
+  coverage does not improve.
+- `verified_other`: **0**. `OtherMalwares.db` is absent. Only one family voter
+  (rat-king) exists for non-AsyncRAT families; a second family-specific voter
+  (Malpedia/Elastic) is needed before promotion.
+- 13 contradictions, all AsyncRAT vs fork: 9 XWorm, 2 DcRat, 1 VenomRAT,
+  1 QuasarRAT. The 2 QuasarRAT samples not hit by own YARA became `unverified`
+  with `sug_fam=QuasarRAT`.
+- Own YARA: 0 benign hits; 3 `rejected_non_dotnet` raw matches (7-8 wide
+  AsyncRAT strings, no CLR header; rule 1 rejects them).
+- `label_evidence`: 360 rows (180 rat-king + 180 own-YARA), 0 raw values over
+  717 bytes. `lbl_src`: 170 `auto_aggregator`, 10 `hand_benign`.
+- Data-loss check: `samples.db` hash unchanged; 180 label JSONs byte-identical;
+  `DataSet.db` 180 rows, 0 NULL `cluster_id`; `AsyncRAT.db` 48; `Benign.db` 10;
+  no missing/extra samples; 45 clusters, 14 multi-member, 0 mixed-family.
+
+### Q88 — Deviations and open items
+
+- The source download was a deliberate, user-authorised deviation from the
+  original "no network" wording. The source is reference-only and gitignored.
+- MalwareBazaar metadata, DIE, Elastic/Malpedia/YARAify voters and the gold set
+  are not implemented; they remain in `Docs/TO-DO.md` 0.4.
+- `verified_other` routing is implemented and tested, but no real row exists
+  because the second family voter is out of scope.
+- The own-YARA rule is a lineage detector. It is independent in rule strings
+  from rat-king/Elastic, but not independent in the statistical sense for
+  forks; that is why contradicting forks stay in `review`.

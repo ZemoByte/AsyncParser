@@ -15,6 +15,7 @@ import os
 import sqlite3
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pefile
@@ -69,6 +70,17 @@ ROOT = SCRIPT_DIR.parent.parent
 DEFAULT_DB = ROOT / "Tools" / "MBDownloader" / "samples.db"
 DEFAULT_SAMPLES = ROOT / "Samples"
 DEFAULT_OUT = ROOT / "Data"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from Tools._label_common import canonical_family  # noqa: E402
+
+EVIDENCE_RAW_LIMIT = 1000
+
+
+def utc_now() -> str:
+    return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+
+
 def parser_version() -> str:
     proc = subprocess.run(
         ["rat-king-parser", "-v"], capture_output=True, text=True, check=True
@@ -172,6 +184,26 @@ def write_json(path: Path, payload: dict) -> None:
     os.replace(temporary, path)
 
 
+def write_evidence(out_root: Path, sha256: str, source_version: str, verdict: str,
+                   strength: str, raw: dict) -> None:
+    payload = {
+        "schema_version": 1,
+        "sha256": sha256,
+        "kind": "evidence",
+        "producer": "voter:rat_king_parser",
+        "fields": {
+            "source": "rat_king_parser",
+            "source_version": source_version,
+            "independence_group": "yara:rat-king",
+            "verdict": verdict,
+            "strength": strength,
+            "raw": raw,
+            "observed_at": utc_now(),
+        },
+    }
+    write_json(out_root / "Evidence" / sha256 / "rat_king_parser.json", payload)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Label downloaded samples")
     parser.add_argument("--db", type=Path, default=DEFAULT_DB)
@@ -185,6 +217,7 @@ def main() -> int:
     benign_root = args.benign_root.resolve()
     out_root = args.out.resolve()
     labels_dir = out_root / "Labels"
+    evidence_dir = out_root / "Evidence"
     sample_index = build_sample_index(samples_root)
 
     connection = sqlite3.connect(f"file:{args.db}?mode=ro", uri=True)
@@ -218,15 +251,18 @@ def main() -> int:
     detected_parser_version = parser_version()
 
     targets = ledger_targets + benign_targets
+    benign_paths = {path for _, path in benign_targets}
+    evidence_count = 0
     for sha256, path in targets:
         report = reports.get(sha256.lower()) if (sha256, path) in ledger_targets else None
         is_net = is_dotnet(path)
+        is_benign = path in benign_paths
         family = ""
         config = None
         if report is not None:
             family = str(report.get("yara_possible_family") or "")
             config = map_config(report.get("config"))
-        if path in [p for _, p in benign_targets]:
+        if is_benign:
             status = "benign" if is_net else "rejected_non_dotnet"
             suggested_family = "Benign" if is_net else ""
         else:
@@ -250,10 +286,49 @@ def main() -> int:
         }
         write_json(labels_dir / f"{sha256}.json", payload)
 
+        if not is_net:
+            verdict = "no_match"
+            raw = {"reason": "not_dotnet"}
+        elif is_benign:
+            verdict = "no_match"
+            raw = {"reason": "benign_not_parsed"}
+        elif report is None:
+            verdict = "no_match"
+            raw = {"reason": "no_parser_report"}
+        else:
+            raw_family = str(report.get("yara_possible_family") or "")
+            canonical_error = None
+            try:
+                verdict = canonical_family(raw_family) or "no_match"
+            except RuntimeError as exc:
+                verdict = "no_match"
+                canonical_error = str(exc)
+            config_raw = report.get("config")
+            raw = {
+                "yara_possible_family": raw_family,
+                "config_present": isinstance(config_raw, dict) and bool(config_raw),
+                "config_error": (
+                    config_raw[:EVIDENCE_RAW_LIMIT] if isinstance(config_raw, str) else None
+                ),
+                "canonical_error": canonical_error,
+            }
+        write_evidence(out_root, sha256, detected_parser_version,
+                       verdict, "strong", raw)
+        evidence_count += 1
+
     marker = labels_dir / ".labeler.done"
     marker.write_text(json.dumps({"producer": "labeler", "count": len(targets)}, sort_keys=True),
                      encoding="utf-8")
+    evidence_dir.mkdir(parents=True, exist_ok=True)
+    evidence_marker = evidence_dir / ".rat_king_parser.done"
+    evidence_marker.write_text(
+        json.dumps({"producer": "voter:rat_king_parser",
+                    "source_version": detected_parser_version,
+                    "count": evidence_count}, sort_keys=True),
+        encoding="utf-8",
+    )
     print(f"labeled {len(targets)} samples into {labels_dir}")
+    print(f"wrote {evidence_count} rat_king_parser evidence files into {evidence_dir}")
     return 0
 
 

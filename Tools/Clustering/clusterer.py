@@ -14,6 +14,10 @@ import tlsh
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 ROOT = SCRIPT_DIR.parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+from Tools._label_common import load_final_label  # noqa: E402
+
 DEFAULT_SAMPLES = ROOT / "Samples"
 DEFAULT_LABELS = ROOT / "Data" / "Labels"
 DEFAULT_OUT = ROOT / "Data" / "Clusters"
@@ -42,17 +46,9 @@ def write_marker(directory: Path) -> None:
 
 
 def load_label(sha: str, labels_root: Path) -> dict:
-    path = labels_root / f"{sha}.json"
-    if not path.is_file():
-        raise RuntimeError(f"missing label JSON for {sha}")
-    try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"invalid label JSON for {sha}: {exc}") from exc
-    if not isinstance(payload, dict):
-        raise RuntimeError(f"label JSON for {sha} is not an object")
-    fields = payload.get("fields", {})
-    return fields if isinstance(fields, dict) else {}
+    """Load the final label (aggregate if present, else Data/Labels)."""
+    data_dir = Path(labels_root).resolve().parent
+    return load_final_label(sha, data_dir=data_dir)
 
 
 def _is_placeholder(value) -> bool:

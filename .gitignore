@@ -28,5 +28,6 @@ Thumbs.db
 *.bak
 Tools/MBDownloader/temp/
 Tools/ObfuscatorRepos/
+Reference/
 .obsidian/
 .vscode/

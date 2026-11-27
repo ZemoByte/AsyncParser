@@ -29,7 +29,7 @@ Labels are decided by **independent static voters**, not by one parser. The rule
 | Voter | Independence group | Verdict | Strength | Status |
 |---|---|---|---|---|
 | `rat_king_parser` family YARA (`asyncrat`, `dcrat`, `quasarrat`, `xenorat`, `xworm`, `venomrat`) | `yara:rat-king` | family / no match | strong positive; **no match = abstain** | implemented |
-| Own YARA rules derived from the AsyncRAT source/builder | `yara:own` | family / no match | strong | TODO |
+| Own YARA rules derived from the AsyncRAT source/builder | `yara:own` | family / no match | strong | implemented — 13 strings, 4-of-13, benign 0; lineage detector, hits forks too |
 | Elastic `Windows_Trojan_Asyncrat_11a11ba1` + `Windows_Trojan_DCRat_1aeea1ac`, `Windows_Trojan_XWorm_*`, `Windows_Trojan_Quasarrat_e52df647` | `yara:elastic` | family / no match | strong | TODO |
 | Malpedia family rules (`/api/get/yara/<family_id>`; IDs `win.asyncrat`, `win.dcrat`, `win.xworm`, `win.quasar_rat`, `win.venom`, `win.njrat`, `win.remcos`, `win.xenorat`) | `yara:malpedia` | family / no match | strong/medium | TODO |
 | signature-base rules | `yara:signature-base` | family / no match | medium | TODO — no AsyncRAT-specific rule found in a tree scan; verify before adding |
@@ -67,7 +67,7 @@ Labels are decided by **independent static voters**, not by one parser. The rule
 
 **Gold set [DECIDED]:** about 30 samples hand-labeled in dnSpyEx, selected by **cluster** (not file) and stratified across `verified`, `review`, `unverified`, `benign`, `rejected_non_dotnet`. Stored in `Data/Gold/gold.csv`; the importer adds `is_gold` and `gold_family`; gold rows stay in `DataSet.db` only and are excluded from every split and from the class DBs. Used only to audit voter precision/recall, not to train. Freeze the SHA-256 list before labeling.
 
-**Manifest columns to add:** `label_status` (`verified | verified_other | unverified | rejected_non_dotnet | rejected_hash_mismatch | reference_only | needs_human_review | benign`), `label_source` (`auto_aggregator | human_gold | parser_only | hand_benign`), `suggested_family`, `obfuscation_level`, `label_reason` (JSON), `is_gold`, `gold_family`, config columns (hosts, ports, mutex, key, salt). Short DB names are in `Docs/SHORT_NAMES.md`.
+**Manifest columns to add:** `label_status` (`verified | verified_other | unverified | rejected_non_dotnet | rejected_hash_mismatch | reference_only | needs_human_review | benign`), `label_source` (`auto_aggregator | human_gold | parser_only | hand_benign`), `suggested_family`, `obfuscation_level`, `label_reason` (JSON), `is_gold`, `gold_family` (DB column `gold_fam`), config columns (hosts, ports, mutex, key, salt). Short DB names are in `Docs/SHORT_NAMES.md`.
 
 ### Data needs [TODO]
 - Pull a larger MalwareBazaar AsyncRAT set. Audit tags for fork contamination (DcRat, Quasar, VenomRAT).
@@ -151,8 +151,8 @@ Report the **abstain rate per class** next to accuracy (e.g. "abstained on 40% o
 
 ## 11. Build order (each step has a check)
 1. **[DONE]** Append-only download ledger `Tools/MBDownloader/samples.db` and label vocabulary (including `benign`) are defined; separate `Data/*.db` files created by the importer.
-2. **[PARTIAL]** Label evidence: `rat_king_parser` voter works via `Tools/Labeling/labeler.py`; own YARA, MalwareBazaar metadata, DIE and the aggregator are not built. → check: statuses recorded in `DataSet.db`, parser exceptions captured in `config.parse_error`.
-2b. **[NOT STARTED]** Independent voters + aggregator + `label_evidence` + gold set (§4) → check: every sample has evidence rows; aggregator writes `lbl_sts`/`sug_fam`/`lbl_src`; voter precision/recall reported on the gold set; `verified_other` populates `OtherMalwares.db`.
+2. **[PARTIAL]** Label evidence: `rat_king_parser` + own YARA voters work; the aggregator writes final labels. MalwareBazaar metadata and DIE are not built. → check: labels byte-identical after the labeler, parser exceptions captured in `config.parse_error`.
+2b. **[PARTIAL]** Independent voters + aggregator + `label_evidence` done for rat-king + own YARA; gold set and precision/recall pending. → check: 360 evidence rows for 180 samples; `lbl_src` 170 `auto_aggregator` + 10 `hand_benign`; `verified_other` routing tested but 0 real rows; tests 25/25.
 3. **[PARTIAL]** Clusters are built (45 clusters, 14 multi-member, 0 mixed-family); benign .NET and other-RAT negatives are still thin. Splits not built. → check: no cluster spans splits; cluster counts reported.
 4. **[PARTIAL]** Five Layer A carvers exist (`ImportTable`, `TypeRef`, `MemberRef`, `AssemblyRef`, `ImplMap`); the training-only vocabulary (`Docs/vocab.json`) is not fitted until splits exist.
 5. **[NOT STARTED]** LightGBM + TLSH kNN + trivial baseline → check: `Docs/results.md` with confusion matrices and per-class coverage.
@@ -161,7 +161,7 @@ Report the **abstain rate per class** next to accuracy (e.g. "abstained on 40% o
 8. **[NOT STARTED]** Stage 2 family step and explainer templates.
 9. **[NOT STARTED]** Only then: neural encoder or language-model explainer.
 
-## 12. Current state (2026-11-26)
+## 12. Current state (2026-11-27)
 
 **Done — downloader and data intake (synthetic-tested, no live API run after the final changes):**
 - `Tools/MBDownloader/mb_downloader.py`: interactive menu, file-type validation, primary/secondary/Surprise Me tag rule, one `get_taginfo` query per run, new-first then backlog ordering, SHA256 dedup, rate limiting, 5 retries, 429 backoff, Ctrl+C stop, clean summary, temp DB cleanup, console progress lines.
@@ -177,8 +177,8 @@ Report the **abstain rate per class** next to accuracy (e.g. "abstained on 40% o
 
 **Not done yet:**
 - Obfuscator fingerprint detection: two markers implemented (`ConfusedByAttribute`, `LoGiCdotNetAttribute`); no matches in 180 samples. DIE (`diec -j -d -e`) is the planned replacement for `obf_lvl`; it is not installed yet.
-- Label evidence: `label_evidence` table, aggregator, `verified_other` promotion and gold set are not built. The proposed three starting voters are own YARA, MalwareBazaar metadata and DIE; `rat-king-parser` already exists and should count as the fourth. The MB ledger is missing `signature` (see above).
-- Reference archive contents inspection and mapping. CAPE is no longer planned (superseded by the independent voters; do not add it unless it can run standalone).
+- Label evidence: offline core built (rat-king + own YARA + aggregator + importer + `label_evidence`); MalwareBazaar metadata, DIE, Elastic/Malpedia/YARAify and the gold set are still pending. The MB ledger is missing `signature` (see above). See `Docs/results.md`.
+- Reference archive contents inspection and mapping. `Reference/AsyncRAT-C-Sharp` is a gitignored reference checkout; `Reference/vx-underground` holds the saved vx READMEs. CAPE is no longer planned (superseded by the independent voters; do not add it unless it can run standalone).
 - Layer A extractor and `Docs/vocab.json`; LightGBM, TLSH kNN and trivial baseline; `Docs/results.md`.
 - Clusters: `Tools/Clustering/clusterer.py` implemented; `cluster_id` populated (45 clusters, 14 multi-member, 0 mixed-family). The fresh-run union-guard bug is fixed (see `Docs/DECISIONS_PART2.md`). Temporal splits still pending.
 - Abstention thresholds, ablations, ~20-sample dnSpyEx human check, Stage 2 explainer templates, `Docs/limitations.md`.
