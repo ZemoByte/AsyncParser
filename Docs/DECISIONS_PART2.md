@@ -1,7 +1,7 @@
 # DECISIONS_PART2.md — Step 0.2: Clustering
 
-Status: **plan supplied by user; interview pending; no code written.**
-All decisions made in the interview will be appended here.
+Status: **clustering implemented (2026-11-27); label-evidence follow-up pending.**
+All decisions made in the interview are appended here; the implementation summary is at the end.
 
 ## Context
 
@@ -115,7 +115,7 @@ These are **reported findings and recommended fixes**, not decisions. None are i
 
 ### Logical errors / recommended fixes
 
-1. **HIGH — no path for other-RAT hard negatives.** `label_status` only emits `verified` for AsyncRAT; every other family becomes `review`, and Q58 keeps `review` in `DataSet.db` only. `OtherMalwares.db` stays empty, so Stage 1/2 never see hard negatives. **Recommended fix:** define a promotion status (e.g. human-approved `verified_other`) that turns a reviewed row into a training row, and implement that transition in `labeler.py` / `importer.py`. Everything downstream depends on this.
+1. **HIGH — no path for other-RAT hard negatives.** `label_status` only emits `verified` for AsyncRAT; every other family becomes `review`, and Q58 keeps `review` in `DataSet.db` only. `OtherMalwares.db` stays empty, so Stage 1/2 never see hard negatives. **Recommended fix:** define a promotion status (e.g. human-approved `verified_other`) that turns a reviewed row into a training row, and implement that transition in `labeler.py` / `importer.py`. Everything downstream depends on this. **Resolved by design (2026-11-27):** `verified_other` + independent-voter aggregator in `Docs/DECISIONS.md` §36 and `Docs/Plan.md` §4. Importer change still pending.
 2. Benign rows have `obf_lvl=unknown` because the parser is skipped for benign. Internally consistent; per-obfuscation reporting cannot distinguish plain vs obfuscated benign. Acceptable, just document.
 3. `detect_obfuscator` covers only 2 of 8 repos (ConfuserEx, LoGiC.NET), `[TEST]`; obfuscation split reporting is currently meaningless.
 4. Tests live in `/tmp/opencode`, not in the repo; carvers have no automated tests. Recommended: move/add tests to the repo so a fresh clone can reproduce them.
@@ -138,9 +138,9 @@ These are **reported findings and recommended fixes**, not decisions. None are i
 
 ## Status
 
-- 0.2 design interview was closed at Q18 (5 batches: Q1–Q18, all answered). No 0.2 code written yet; implementation starts only on explicit user instruction.
-- Post-0.1 findings above are logged as recommended fixes awaiting decisions.
-- **Interview reopened** by the mixed-cluster and non-.NET questions below (batch 5, 10 questions pending).
+- 0.2 clustering is implemented: 180 samples → 45 clusters, 14 multi-member, 0 mixed-family, 0 NULL `cluster_id`.
+- Batches 5 (mixed-cluster/non-.NET), 6 (Q21–Q25) and Q26–Q30 are answered below.
+- Post-0.1 findings are resolved by design where noted; the label-evidence follow-up is in `Docs/DECISIONS.md` §36 and the implementation summary is at the end of this file.
 
 ## Interview questions — batch 5 (pending, 10 questions)
 
@@ -267,7 +267,7 @@ These five were labelled Q11–Q15 when asked in chat, but Q11–Q18 already exi
 - Transitive closure via Union-Find (connected components).
 - `cluster_id` = lexicographically smallest SHA-256 among members.
 - Singletons get `cluster_id = their own sha256`.
-- Family-consistency guard (Q26): treats `lbl_sts=verified` as family `AsyncRAT`. Logs warning on mixed-family clusters.
+- Family-consistency guard (Q26): treats `lbl_sts=verified` as family `AsyncRAT` in **both** the union-time guard and the post-run warning; family strings are lowercased before comparison. Logs a warning on mixed-family clusters.
 - Cluster JSON fields (Q28): `cluster_id`, `is_dotnet`, `tlsh`, `config_keys`.
 - Writes `Data/Clusters/<sha256>.json` + `Data/Clusters/.done`.
 
@@ -275,10 +275,23 @@ These five were labelled Q11–Q15 when asked in chat, but Q11–Q18 already exi
 - Reads cluster JSONs from `Data/Clusters/` (mandatory: requires `.done` and exactly 180 JSONs).
 - Auto-ALTERs `DataSet.db` to add `cluster_id TEXT` and `split TEXT` columns.
 - Sets `cluster_id` on each dataset row.
-- Verified: 180 rows, 0 NULL, 44 distinct clusters.
+- Verified: 180 rows, 0 NULL, 45 distinct clusters.
 
 ### Run results
-- 180 samples clustered into 44 clusters (13 multi-member).
-- 1 mixed-family warning: `053fa0de7562` (AsyncRAT + xworm).
+- 180 samples clustered into 45 clusters (14 multi-member), **0 mixed-family** after the Q26 union-guard fix.
+- The earlier `053fa0de7562` 63-member AsyncRAT + xworm cluster split into a 56-member AsyncRAT component and a 7-member xworm component. All 7 moved samples are `lbl_sts=review`, `sug_fam=xworm`.
 - Full pipeline (labeler → clusterer → 5 carvers → importer) completes successfully.
 - All synthetic tests pass (labeler, importer, downloader 12/12, live paths 6/6).
+
+### Fresh-run bug fix (2026-11-27)
+
+- The fresh run reproduced the mixed-family warning. Cause: the union-time guard built `families` from `sug_fam` only, so `lbl_sts=verified` rows looked family-less and could join an xworm component. The post-run warning used `family_of()` (which maps `verified` → AsyncRAT), so it reported the mix only after the merge.
+- Fix: the union guard now uses the same mapping (`verified` → `asyncrat`) and lowercases family strings. Rerun: 45 clusters, 14 multi-member, 0 mixed-family.
+- Fresh-run data-loss check: `samples.db` hash unchanged; 180 label JSONs byte-identical; all 15 carved directories byte-identical; `DataSet.db` 180 rows, 0 NULL `cluster_id`; `AsyncRAT.db` 48 rows; `Benign.db` 10 rows; no missing or extra samples.
+
+### Label-evidence follow-up (2026-11-27)
+
+- The HIGH hard-negative finding is resolved by design: `verified_other` + independent-voter aggregator (`Docs/DECISIONS.md` §36, `Docs/Plan.md` §4). Implementation is pending.
+- `OtherMalwares.db` will be populated by `verified_other` rows; `review` still stays in `DataSet.db` only.
+- Two proposed voters are excluded to avoid label leakage: PE/.NET metadata (Layer A features) and TLSH-to-reference (kNN feature). Config/default-value checks, YARA strings, MB metadata and DIE are safe.
+- MalwareBazaar metadata is currently blocked by the live ledger gap: `samples.db` has no `signature` column and empty `api_tags`.

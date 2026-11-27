@@ -90,7 +90,7 @@ This is a university project: a **static detector for AsyncRAT .NET client paylo
 ### 9. Safety (strict)
 - NEVER execute, load, import, or build any malware sample or any builder, server or stub component. Static parsing only.
 - NEVER generate or compile new AsyncRAT clients.
-- Assume everything runs in an isolated VM with no network and no shared folders. If a step needs to run something from a sample, stop and ask.
+- The working environment is a Fedora VM. Windows PE/.NET samples cannot execute here. Network access is available; live MalwareBazaar/YARAify/Malpedia calls are allowed when the user authorizes them. Never print or log an API key.
 - Ask before deleting anything.
 - Do not commit binaries (`*.exe`, `*.dll`, `*.zip`, `*.7z`, `*.p12`) or anything under `Samples/`.
 

@@ -102,11 +102,11 @@ def config_keys(config) -> frozenset:
 
 def family_of(sha: str, labels_root: Path) -> str:
     fields = load_label(sha, labels_root)
-    sug = str(fields.get("sug_fam") or "").strip()
+    sug = str(fields.get("sug_fam") or "").strip().lower()
     if sug:
         return sug
     if str(fields.get("lbl_sts") or "").strip() == "verified":
-        return "AsyncRAT"
+        return "asyncrat"
     return ""
 
 
@@ -163,7 +163,10 @@ def main() -> int:
         fields = load_label(sha, labels_root)
         configs[sha] = config_keys(fields.get("config"))
         config_dicts[sha] = config_keys_dict(fields.get("config"))
-        families[sha] = str(fields.get("sug_fam") or "").strip()
+        suggested = str(fields.get("sug_fam") or "").strip().lower()
+        if not suggested and str(fields.get("lbl_sts") or "").strip() == "verified":
+            suggested = "asyncrat"
+        families[sha] = suggested
         is_dotnet_map[sha] = bool(fields.get("is_dotnet"))
 
     parent = {sha: sha for _cn, sha, _p in sample_list}

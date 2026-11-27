@@ -19,14 +19,16 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
   - [x] For each downloaded sample: run `rat_king_parser`, store result
   - [x] Per Plan.md: `verified` = .NET AND parser reports AsyncRAT AND config has non-placeholder hosts/ports
     - Rule changed by decision: config is stored only if returned; missing/placeholder config does not downgrade (`Docs/DECISIONS.md` §3).
+    - **Superseded for the final label by 0.4:** `rat_king_parser` is now one voter, not the only decision maker. `verified` requires ≥2 independent agreements.
   - [x] Store `label_status`, `suggested_family`, `obfuscation_level`
     - Also stores `is_dotnet`, `parser_version`, `config`, `target_class_db`.
 
-- [ ] **0.2 — Cluster assignment**
-  - [ ] Compute TLSH for every sample (use `tlsh` Python package)
-  - [ ] Cluster by TLSH distance (~100 threshold) + shared config keys (mutex, AES key, C2 host)
-  - [ ] Store `cluster_id` per sample
-  - [ ] This must happen before any split
+- [x] **0.2 — Cluster assignment**
+  - [x] Compute TLSH for every sample (use `tlsh` Python package)
+  - [x] Cluster by TLSH distance (~100 threshold) + shared config keys (mutex, AES key, C2 host)
+  - [x] Store `cluster_id` per sample
+  - [x] This must happen before any split
+    - Result: 180 samples → 45 clusters, 14 multi-member, 0 mixed-family, 0 NULL `cluster_id`.
 
 - [ ] **0.3 — Benign .NET collection**
   - [ ] You need hundreds of benign .NET executables
@@ -35,8 +37,23 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
   - [x] Never from MalwareBazaar (it has no benign files)
     - Constraint respected.
 
-- [ ] **Checkpoint:** `dataset.db` has every sample with `sha256`, `label_status`, `cluster_id`, `is_dotnet`
-  - `cluster_id` is still missing (0.2).
+- [ ] **0.4 — Label evidence and aggregation**
+  - [ ] Add `label_evidence` table (`sha256, source, source_version, independence_group, verdict, strength, raw, observed_at`)
+  - [ ] Voter 1: own YARA rules derived from the AsyncRAT source/builder (strings, not Layer A metadata)
+  - [ ] Voter 2: MalwareBazaar metadata (`signature` medium; tags/vendor_intel/ClamAV weak)
+    - Blocked: live `samples.db` has no `signature` column and empty `api_tags`; migrate first.
+  - [ ] Voter 3: Detect It Easy `diec -j -d -e` for `obf_lvl` only (not a family vote)
+  - [ ] Voter 4 (existing): `rat_king_parser`; no match is abstention, not a negative
+  - [ ] Aggregator: `verified` = CLR + ≥2 independent strong/medium AsyncRAT agreements + no contradiction
+  - [ ] Aggregator: `verified_other` for XWorm/DcRat/QuasarRAT/VenomRAT/NjRAT/Remcos/XenoRat → `OtherMalwares.db`
+  - [ ] Aggregator: `review` on contradiction; `unverified` on one/weak/no votes
+  - [ ] Importer: add `lbl_src`, `lbl_reason`, `is_gold`, `gold_family`; route `verified_other`
+  - [ ] Gold set: ~30 samples by cluster, hand-labeled in dnSpyEx, frozen before labeling, excluded from training
+  - [ ] Audit: per-voter coverage/precision/recall/F1, contradiction rate, `obf_lvl` agreement → `Docs/results.md`
+  - [ ] Add Elastic (`Windows_Trojan_Asyncrat_11a11ba1`), Malpedia (`win.asyncrat`), YARAify `lookup_hash` as later voters
+
+- [ ] **Checkpoint:** `dataset.db` has every sample with `sha256`, `label_status`, `cluster_id`, `is_dotnet`, `label_source`
+  - `cluster_id` is done (45 clusters). `label_source`/`is_gold` are pending 0.4.
 
 ---
 
@@ -160,7 +177,12 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
   - 0.1 labeling/carving/import is finished.
 - [x] **Install `dnfile`**: `pip install dnfile` — start reading its docs
   - Listed in `Tools/requirements.txt`.
-- [ ] **Install `tlsh`**: `pip install tlsh` — test it on a few samples
+- [x] **Install `tlsh`**: `pip install tlsh` — test it on a few samples
+  - Installed (`python_tlsh-4.5.0`); clustering runs.
+- [ ] **Install Detect It Easy** (`diec`) — needed for `obf_lvl`; read `diec --version` and `diec -h`
+- [ ] **Fix the MalwareBazaar ledger**: add `signature`, `file_size`, `last_seen` to the live `downloads` table and populate `api_tags`
+- [ ] **Write own AsyncRAT YARA rules** from the source strings (not from rat-king-parser or Elastic)
+- [ ] **Freeze the gold-set SHA-256 list** before hand-labeling, so the audit is not tuned on the same samples
 - [x] **Sketch `dataset.db` schema** on paper before coding
   - Recorded in `Docs/DECISIONS.md` §2.
 - [ ] **Collect 10–20 benign .NET exes** from your own machine to test the extractor
