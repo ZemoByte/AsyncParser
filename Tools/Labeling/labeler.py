@@ -126,31 +126,79 @@ def obfuscation_level(is_net: bool, report: dict | None, path: Path) -> str:
     return "unknown"
 
 
+def _parser_chunk(paths: list[Path]) -> list[dict]:
+    proc = subprocess.run(
+        ["rat-king-parser", "-n"] + [str(path) for path in paths],
+        capture_output=True, text=True, check=False,
+    )
+    if proc.returncode != 0:
+        raise RuntimeError(proc.stderr.strip() or "rat-king-parser failed")
+    parsed = json.loads(proc.stdout)
+    if not isinstance(parsed, list):
+        raise RuntimeError("parser output is not a JSON list")
+    return parsed
+
+
 def run_parser(paths: list[Path]) -> dict[str, dict]:
+    """Parse samples in chunks; a single bad sample must not kill the run."""
     reports: dict[str, dict] = {}
     if not paths:
         return reports
     for start in range(0, len(paths), 100):
         chunk = paths[start:start + 100]
-        proc = subprocess.run(
-            ["rat-king-parser", "-n"] + [str(path) for path in chunk],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-        if proc.returncode != 0:
-            raise RuntimeError(proc.stderr.strip() or "rat-king-parser failed")
         try:
-            parsed = json.loads(proc.stdout)
-        except json.JSONDecodeError as exc:
-            raise RuntimeError(f"invalid parser JSON: {exc}") from exc
-        if not isinstance(parsed, list):
-            raise RuntimeError("parser output is not a JSON list")
+            parsed = _parser_chunk(chunk)
+        except (RuntimeError, json.JSONDecodeError):
+            parsed = []
+            for path in chunk:
+                try:
+                    parsed.extend(_parser_chunk([path]))
+                except RuntimeError as exc:
+                    sys.stderr.write(f"WARNING: rat-king-parser failed for "
+                                     f"{path}: {exc}\n")
+                except json.JSONDecodeError:
+                    sys.stderr.write(f"WARNING: rat-king-parser returned "
+                                     f"non-JSON for {path}\n")
         for report in parsed:
             sha256 = str(report.get("sha256") or "").lower()
             if sha256:
                 reports[sha256] = report
     return reports
+
+
+def map_config(raw) -> dict | None:
+    if isinstance(raw, str):
+        if raw.startswith("Exception encountered"):
+            return {"parse_error": raw}
+        return None
+    if not isinstance(raw, dict) or not raw:
+        return None
+    lookup = {str(key).lower(): value for key, value in raw.items()}
+    wanted = ("hosts", "ports", "mutex", "key", "salt")
+    result = {name: lookup[name] for name in wanted if name in lookup}
+    return result or None
+
+
+def label_status(is_net: bool, family: str) -> tuple[str, str]:
+    if not is_net:
+        return "rejected_non_dotnet", ""
+    normalized = (family or "").strip().lower()
+    if normalized == "asyncrat":
+        return "verified", ""
+    if normalized and normalized != "no match":
+        return "review", family.strip()
+    return "unverified", ""
+
+
+def obfuscation_level(is_net: bool, report: dict | None, path: Path) -> str:
+    if report is None or isinstance(report.get("config"), str):
+        return "unknown"
+    if not is_net:
+        return "unknown"
+    fingerprint = detect_obfuscator(path)
+    if fingerprint is not None:
+        return f"obfuscated:{fingerprint}"
+    return "unknown"
 
 
 def build_sample_index(samples_root: Path) -> dict[str, Path]:

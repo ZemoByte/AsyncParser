@@ -853,6 +853,16 @@ def record_rejection(conn: sqlite3.Connection, sha256: str, reason: str,
     )
 
 
+def resume_plan(manifest: dict, batch: int, limit: int) -> tuple[list[dict], int]:
+    """Resume selected entries; count all batch entries against the limit."""
+    batch_entries = [entry for entry in manifest["entries"]
+                     if entry.get("batch") == batch]
+    resume = [entry for entry in batch_entries
+              if entry.get("status") == "selected"]
+    remaining = max(0, limit - len(batch_entries)) if limit else 0
+    return resume, remaining
+
+
 def run_export_batch(auth_key: str, export_path: Path, batch: int,
                      per_year: int, years: list[int], threshold: int,
                      limit: int, rate: int,
@@ -867,9 +877,7 @@ def run_export_batch(auth_key: str, export_path: Path, batch: int,
 
     scan = export_candidates(archive, ledger, selected_before, years)
     stats = scan["stats"]
-    resume = [entry for entry in manifest["entries"]
-              if entry.get("batch") == batch and entry.get("status") == "selected"]
-    remaining = max(0, limit - len(resume)) if limit else 0
+    resume, remaining = resume_plan(manifest, batch, limit)
     if remaining > 0 or not resume:
         chosen = select_export_batch(scan["by_year"], anchors, per_year,
                                      threshold, remaining)

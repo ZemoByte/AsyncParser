@@ -150,5 +150,18 @@ class ManifestTests(unittest.TestCase):
             self.assertEqual(loaded["entries"], [])
 
 
+class ExportResumeTests(unittest.TestCase):
+    def test_existing_batch_entries_count_toward_limit(self):
+        manifest = {"entries": (
+            [{"sha256": "a", "batch": 2, "status": "downloaded"}] * 31
+            + [{"sha256": "b", "batch": 2, "status": "selected"}] * 319)}
+        resume, remaining = mb_downloader.resume_plan(manifest, 2, 350)
+        self.assertEqual((len(resume), remaining), (319, 0))
+
+    def test_fresh_batch_gets_full_limit(self):
+        _, remaining = mb_downloader.resume_plan({"entries": []}, 2, 350)
+        self.assertEqual(remaining, 350)
+
+
 if __name__ == "__main__":
     unittest.main()
