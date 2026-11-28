@@ -239,6 +239,8 @@ def explainability(data: dict, top: int = 5) -> dict:
         if not candidates:
             candidates = list(range(min(top, len(data["y"]))))
         contributions = model.predict(data["X"][candidates], pred_contrib=True)
+        if hasattr(contributions, "toarray"):
+            contributions = contributions.toarray()
     else:
         importance = []
         contributions = np.zeros((top, len(feature_names) + 1))
@@ -284,6 +286,14 @@ def stage2_decision(votes: list[str], nearest_family: str,
     confident = [family for family, count in families.items() if count >= 2]
     if len(confident) == 1:
         family = confident[0]
+        support = families[family]
+        if family in {"QuasarRAT", "DcRat"}:
+            # Tiny families need explicit confidence (3+ voters and a close
+            # nearest known sample); otherwise abstain.
+            if (support >= 3 and nearest_family == family
+                    and distance is not None and distance <= threshold):
+                return family
+            return "abstain"
         if nearest_family == family and distance is not None and distance <= threshold:
             return family
         if family in {"XWorm", "VenomRAT"} and nearest_family in {"", family}:

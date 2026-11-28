@@ -701,3 +701,172 @@ stays 100 and `Data/Clusters` was not overwritten.
   YARAify evidence is no_match.
 - The live MalwareBazaar ledger has no `signature`; MB evidence is weak-only.
 - The 30-row gold set is not hand-labeled; precision/recall audit is pending.
+
+## 40. Fixup evaluation — approved diagnostics and corrections (2026-11-28)
+
+Context: the Phase 1.9 dataset is frozen (1,824 rows). The data gate fails and
+every model number is diagnostic. This entry records the fixup brief's
+approvals; it does not change labels, clusters, splits or gate thresholds.
+
+### D1 — largest-positive-cluster cap (APPROVED, train only)
+
+- **Decision:** in `train` only, cap the largest positive cluster at 10 rows,
+  chosen with numpy seed 42. No other cluster is capped; val/test are never
+  capped. The DB, labels and split files are unchanged.
+- **Reason:** the 89-row AsyncRAT cluster is 60.1% of train and makes the
+  model memorise one build family. The cap is a diagnostic ablation.
+- **What would change it:** a user decision to accept the degenerate train
+  split, or a future dataset with a non-degenerate train split.
+- **Verified by:** a synthetic test over cluster sizes, and by reporting
+  capped vs uncapped train counts and rows removed.
+
+### D2 — Hassan 70/30 partition (NOT APPROVED as main setup)
+
+- **Decision:** keep the full 565-row `clrheader2023` external holdout for the
+  main FPR. A 70/30 cluster partition may run only as a separate ablation
+  after the user says "approve D2". No cluster may be in both partitions.
+- **Reason:** moving 70% of the external holdout into training changes the
+  main FPR definition and can disturb the split; the full holdout is the
+  cleaner primary measurement.
+- **What would change it:** explicit user approval. The brief's WS3 is then
+  run with cluster/split checks.
+- **Verified by:** not applicable yet. WS3 and the partition helper were not
+  created or run; D2 remains unapproved.
+
+### D3 — grade basis
+
+- **Assumption:** the grade is based on method and an honest write-up, not on
+  a detection number. Deadline unknown; no schedule assumptions.
+- **What would change it:** the user states a different grading basis.
+
+### P1 — feature policy (APPROVED, diagnostic)
+
+- **Decision:** drop `structure_file_size`, `structure_section_count`,
+  `structure_entropy_max`, `structure_entropy_mean` from model features.
+  Keep them only in a clearly labelled diagnostic run. Keep the metadata
+  counts (`type`, `method`, `typeref`, `memberref`, `implmap`, `importtable`,
+  `resource`).
+- **Reason:** AGENTS §8 bans file-format columns as model features.
+- **What would change it:** a user decision to treat container fields as
+  capacity signals. They still cannot be used as detection features.
+- **Verified by:** the policy matrix under `Data/Features/policy/` and the
+  paired ablation in `fixup_eval.py`.
+
+### P2 — Stage 2 eligibility (APPROVED, diagnostic)
+
+- **Decision:** a family gets Stage 2 metrics only with at least 20 rows and
+  10 clusters in the dataset. Today that is AsyncRAT and XWorm only. Label
+  XWorm "low support" when the test split has fewer than 5 XWorm clusters.
+  The gate code is unchanged.
+- **Reason:** a 1-row or 3-row family cannot support a metric.
+- **What would change it:** more independent clusters for a family.
+- **Verified by:** the eligibility table with row/cluster/test-support counts.
+
+### P3 — temporal split (APPROVED, diagnostic)
+
+- **Decision:** keep the temporal split and label every temporal result
+  diagnostic. Record the benign collection-batch artifact in
+  `Docs/limitations.md`.
+- **Reason:** Plan §5 requires a temporal split, but benign `first_seen` comes
+  from `collected_at` (10 collection batches), not from real first-seen dates.
+- **What would change it:** real benign first-seen dates or a user decision to
+  drop temporal evaluation.
+- **Verified by:** the benign timestamp fallback counts (WS8) and the
+  limitation text.
+
+### WS6b — LOCO addendum (APPROVED)
+
+- **Decision:** leave-one-cluster-out over all 52 verified AsyncRAT clusters,
+  and separately over verified + verified_other clusters, with the WS6 model
+  list, per-cluster recall, aggregate metrics and cluster bootstrap CIs.
+- **Reason:** the 70/15/15 split is degenerate; LOCO is the honest
+  cluster-level check. It is still diagnostic.
+- **What would change it:** a non-degenerate split.
+- **Verified by:** `Tools/Models/fixup_eval.py` and its synthetic tests.
+
+### Corrections
+
+- The earlier review said `Docs/limitations.md` was unstarted. It exists and
+  contains the frozen ceiling; this entry corrects the status only.
+- The benign temporal order is a **collection-batch artifact**: `split.py`
+  falls back to `collected_at` (10 batches) or 1970-01-01, not real
+  first-seen dates.
+- The fixup brief says 192 tests; the actual count at WS0 is **202** because
+  Phase 4 added 10 synthetic tests (`tests/test_phase4.py`). No data, gate or
+  split number differs.
+
+## 41. OOF threshold calibration for the fixup diagnostics (2026-11-28)
+
+### Context
+
+The Phase 2.1c threshold was selected on in-sample train predictions. LightGBM
+train scores are near 0/1, so the threshold was ~0.998; test F1 fell from .921
+at 0.5 to .877, and the 565-row holdout FPR fell to 0/565. That was an
+operating-point artifact, not a detector result.
+
+### Decision
+
+The main fixup threshold is selected on **grouped out-of-fold (OOF)** scores
+from the train split only: 5-fold `GroupKFold` by `cluster_id`, the same model
+fitted on each fold-train and scored on fold-test, then the F1-maximizing
+threshold on the pooled OOF scores. The capped model caps the largest positive
+cluster in each fold-train. P/Invoke and file-size use their raw train values;
+the random-split diagnostic uses OOF within its own train part. 0.5 remains the
+fixed reference; the in-sample threshold is kept only as an explicitly
+overfit sensitivity column.
+
+### Reason
+
+The threshold must not see val/test, and it must not be chosen on the same
+in-sample scores the model memorized. Grouping by cluster keeps near-identical
+builds together. This makes the operating point comparable across models and
+removes the 0/565 headline.
+
+### What would change it
+
+A larger dataset with enough clusters per fold to fit per-fold calibration, or
+a user decision to use a different fixed operating point. Nested CV is not
+used; 0.5 is the honest fixed-point sensitivity.
+
+### Verified by
+
+`Tools/Models/fixup_eval.py` writes `generated_at`, `script_sha256`, `run_id`,
+`oof_folds=5` and `threshold_source=train_oof_groupkfold`; tests cover grouped
+fold construction and metadata presence. The label-quality audit is separate
+and is not human gold.
+
+## 42. Matched-recall operating points for external comparison (2026-11-28)
+
+### Context
+
+Phase 2.1d compared FPRs at each model's own threshold: capability at .559,
+the full model at .064, and P/Invoke at a raw count. FPR at different operating
+points is not a fair comparison.
+
+### Decision
+
+For matched external comparison, choose each model's threshold on train OOF
+scores (or fold-train for LOCO) at a fixed target recall: **95% primary, 90%
+sensitivity**. Probability models use their scores; P/Invoke and file size use
+their raw values and are never assigned 0.5. Apply the same threshold to test
+and the 565-row holdout. The F1-optimal OOF threshold remains a sensitivity
+column; 0.5 remains a probability-model reference only. LOCO uses the same
+matched target, with 0.5 as a probability-only reference.
+
+### Reason
+
+Holding the target recall fixed makes FPR comparisons meaningful across
+models with different score scales. It also exposes distribution shift: a
+threshold calibrated to 95% train OOF recall can yield lower held-out recall.
+
+### What would change it
+
+A larger calibration set with enough clusters per fold, a different fixed
+operating point, or an explicitly approved deployment threshold. Nested CV is
+not used.
+
+### Verified by
+
+`Tools/Models/fixup_eval.py` writes matched-recall tables with one run id;
+tests cover train-only threshold selection and raw-score thresholds. The
+error-analysis JSON reports the actual held-out recall and errors.

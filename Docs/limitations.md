@@ -25,6 +25,10 @@ planned (batch-2 yield was 6.9%, below the 13% stop line).
 - **624 unverified** rows (mostly historical files only the MB signature
   recognizes) and **278 non-.NET** rows are outside training.
 - Batch 2 added 24 verified from 350 samples (**6.9%**).
+- All 498 unverified AsyncRAT-suggested rows are supported by the
+  MalwareBazaar signature alone; none has a family-scoped voter verdict.
+  Obfuscated (106) and plain (392) rows show the same pattern, so obfuscation
+  is not the discriminator.
 
 ## Split validity
 
@@ -36,7 +40,14 @@ planned (batch-2 yield was 6.9%, below the 13% stop line).
 - Because train is degenerate, **every model number is DIAGNOSTIC ONLY**.
   Capability-only F1 0.921 (and the earlier 0.963 at 1,505 rows) is a
   diagnostic, not validation.
-- Holdout FPR 13/565 = 2.3%; LOCO not triggered (23 train positive clusters).
+- Holdout FPR **13/565 = 2.3%** is the **full model** (capability + all
+  counts); capability-only is 35/565 = 6.2% — see Phase 2.1d. LOCO not
+  triggered (23 train positive clusters).
+- **Benign time order is a collection-batch artifact:** all 704 benign rows
+  fall back to `collected_at` (10 distinct timestamps), not real first-seen
+  dates. Positives use `YYYY-MM-DD HH:MM:SS`; benign uses ISO
+  `YYYY-MM-DDTHH:MM:SS+00:00`, so mixed formats can sort wrongly within one
+  date. Every temporal result is diagnostic.
 
 ## Cross-family proximity
 
@@ -66,3 +77,104 @@ labeling errors.
 - There is **no real-world detection claim**. Stage 1 and Stage 2 fail their
   gates; all baselines are diagnostic. Do not report a detector result from
   this dataset until independent clusters (especially AsyncRAT) increase.
+
+## Phase 4 diagnostics (still not a result)
+
+- LOCO over 152 clusters (82 positive folds): full F1 0.981, capability 0.983,
+  structural 0.915, TLSH kNN 0.773. High because clusters are near-duplicate
+  builds; capability F1 is **not** a validated result.
+- Abstention threshold 357 (train-only): verified abstain 9.1% (coverage
+  90.9%), other 3.4%, benign 65.9%. The benign abstention rate is a real
+  coverage limitation.
+- Obfuscated stratum is tiny (20 rows): full F1 0.818 vs 0.990 plain.
+- Hassan-style non-name CLR-header baseline F1 0.874 vs capability 0.983 —
+  methodology comparison only, not superiority.
+- Stage 2 rules/kNN: 24/58 abstain; 33/34 decided correct (1 XWorm→VenomRAT).
+  QuasarRAT/DcRat always abstain with these counts.
+- Holdout FPR: 2.3% for the **full** train-split baseline model (capability
+  + all counts), 6.2% for capability-only, and 10.8% for the all-primary
+  Phase 4 model. Training composition matters; neither is a production
+  estimate.
+- The data ceiling and no-batch-3 decision remain in force.
+
+## Fixup policies (diagnostic, 2026-11-28)
+
+- **P1 feature policy:** `structure_file_size`, `structure_section_count`,
+  `structure_entropy_max` and `structure_entropy_mean` are not model features;
+  they appear only in the diagnostic run. The policy matrix is separate
+  (`Data/Features/policy/`); the original matrix and baseline are untouched.
+- **D1 cap:** train only, largest positive cluster `053fa0de…` capped from 89
+  to 10 rows (79 removed, numpy seed 42). Train goes from 238 rows / 148
+  positives to 159 / 69. Val and test are not capped; the DB, labels and split
+  files are unchanged. This is an ablation, not a fix for the gate.
+- **P2 Stage 2 eligibility:** a family needs at least 20 rows and 10 clusters.
+  Only AsyncRAT (154/52) and XWorm (49/23) qualify. VenomRAT (5/4), QuasarRAT
+  (3/2) and DcRat (1/1) are excluded from Stage 2 metrics; the gate code is
+  unchanged.
+- **D2 Hassan 70/30 partition:** not run; it awaits explicit approval. The
+  main FPR remains the full 565-row external holdout.
+- **P3 temporal:** every temporal number is diagnostic; see the
+  collection-batch caveat above.
+- **Still no detector claim.** Stage 1 and Stage 2 fail, and no number in this
+  document is a real-world estimate.
+
+### Fixup evaluation limits
+
+- **OOF threshold:** the main operating point is selected on grouped 5-fold
+  OOF train scores (`GroupKFold` by `cluster_id`). Test labels never choose it.
+  0.5 is the fixed reference; the in-sample threshold is an explicitly overfit
+  sensitivity column. Capability's OOF threshold is **0.559** (close to 0.5);
+  the full model's is **0.064**.
+- Test split is 52 rows (32 positives, 48 clusters). At the OOF threshold,
+  capability F1 is **.903 [.800, .971]** and P/Invoke **.788 [.677, .904]**
+  (overlap): the operating point does not separate them. PR-AUC **.988
+  [.959, 1.000]** vs **.695 [.553, .902]** and ROC-AUC **.980 [.941, 1.000]**
+  vs **.645 [.441, .847]** do separate. Ranking favors capability; neither
+  comparison is a result.
+- The random split leak check is **.960 (+.057)** F1; not a result.
+- **Holdout:** at 0.5, capability-only is **35/565 = 6.2%** and the full model
+  (capability + all counts) is **13/565 = 2.3%**. At the OOF threshold,
+  capability is **19/565 = 3.4% [2.2, 5.2]** and the full model is
+  **108/565 = 19.1% [11.9, 27.9]**. The historical 2.3% is the full model at
+  0.5, not capability-only; no 0/565 row is headlined. The capped model's
+  6/565 at OOF is not evidence of a perfect detector.
+- **Mixed LOCO at 0.5:** 52 verified folds and 82 positive folds; 70 benign
+  clusters, each held out once; 0 mixed clusters; no held-out cluster in
+  fold-train. Capability recall .981/.981 with FPR .016/.023; P/Invoke recall
+  .942/.953 with FPR .636 (raw-count 0.5 means "any P/Invoke"). Capability's
+  fold-trained thresholds are ~0.993–0.997 and still give 0 FPR; that is the
+  in-sample artifact the fixed 0.5 table replaces. Threshold rows are
+  sensitivity only.
+- **Label audit:** the automated audit covers 1,540 rows; 530 are MB-signature-
+  only (all unverified), 263 are multi-source, 107 have conflicting family
+  verdicts. The project `lineage_only` flag is 11 verified rows; the broader
+  DB-only no-family-scoped count is 49. This is evidence, **not human gold**.
+- **Gold:** 30 rows, 0 filled, no merge; 11 gold candidates have evidence
+  conflicts. No gold_status/gold_family was filled or inferred.
+- **Still no detector claim.** Stage 1 and Stage 2 fail, and no number in this
+  document is a real-world estimate.
+
+## Matched-recall caveat (Phase 5)
+
+- The primary external comparison is the fixed **0.5 probability reference**
+  plus threshold-free PR/ROC. The matched-95 target is a failed calibration and
+  is sensitivity only.
+- Matched thresholds are chosen on **train OOF** scores at 95%/90% target
+  recall. The target does **not** transfer: capability's 95% threshold is
+  ~.998 but actual test recall is 78.1%; P/Invoke's actual test recall is
+  81.2% at raw threshold 4. Capability's holdout FPR is 0/565 at 78.1% actual
+  recall, P/Invoke's is 48/565 at 81.2%. **0/565 is not a result**, and FPRs at
+  different actual recalls are not directly comparable. No “capability has
+  lower FPR” claim is made.
+- LOCO matched 95: capability actual recall .903/.925 with FPR 0/129;
+  P/Invoke .942/.948 with FPR .643/.674. The same actual-recall caveat applies;
+  0.5 is a probability-model reference only, never P/Invoke/file size.
+- **Conflict definition:** a conflict is any row with more than one distinct
+  non-`no_match` family verdict. There are 107: verified_other 56 = **14
+  majority-supported / 0 majority-different / 42 tie**; unverified 51 = **20
+  majority-different / 31 tie**. Gold candidates have 11: **4 different / 7
+  tie**. This is evidence about voter disagreement, **not human gold**.
+- Obfuscated test subset: 6 obfuscated rows, of which **4 are positives**;
+  capability caught 2/4 at matched 95. No metric is computed below 20
+  positives.
+- Gold remains **30 rows / 0 filled / no merge**; D2/WS3 is not run.

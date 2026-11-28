@@ -18,6 +18,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     average_precision_score, confusion_matrix, f1_score,
     precision_recall_fscore_support, precision_score, recall_score,
+    roc_auc_score,
 )
 
 try:
@@ -93,7 +94,8 @@ def bootstrap_ci(y_true, y_pred, y_score, groups, iterations=200, seed=SEED) -> 
     if not unique:
         return {}
     positions = {group: np.where(groups == group)[0] for group in unique}
-    collected = {"precision": [], "recall": [], "f1": [], "pr_auc": []}
+    collected = {"precision": [], "recall": [], "f1": [], "pr_auc": [],
+                 "roc_auc": []}
     for _ in range(iterations):
         chosen = rng.choice(unique, size=len(unique), replace=True)
         indices = np.concatenate([positions[group] for group in chosen])
@@ -103,6 +105,7 @@ def bootstrap_ci(y_true, y_pred, y_score, groups, iterations=200, seed=SEED) -> 
         collected["f1"].append(f1_score(yt, yp, zero_division=0))
         if len(set(yt)) == 2:
             collected["pr_auc"].append(average_precision_score(yt, ys))
+            collected["roc_auc"].append(roc_auc_score(yt, ys))
     return {
         key: [float(np.mean(values)), float(np.percentile(values, 2.5)),
               float(np.percentile(values, 97.5))]
@@ -231,7 +234,8 @@ def evaluate_holdout(model, data_root: Path, vocab: list[str]) -> dict:
                format="csr")
     predictions = model.predict(X)
     positive = int(np.sum(predictions == 1))
-    return {"rows": len(shas), "predicted_positive": positive,
+    return {"model": "lightgbm_full", "rows": len(shas),
+            "predicted_positive": positive,
             "fpr": positive / len(shas) if shas else None}
 
 

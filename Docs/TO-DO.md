@@ -202,6 +202,41 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
 - [x] Schema versions, `Data/Pipeline/state.json` fingerprints, reuse in labeler/carvers/structure/voters, DIE workers, YARAify trivial-skip, single carver pass.
 - [x] Git: the four dataset DBs are tracked; generated JSONs/logs/markers and `Samples/` are ignored; tests stay tracked; only `families.json` is tracked as JSON.
 
+## Phase 4 (evaluation) — LOCO, abstention, explainability
+
+- [x] Cluster-level LOCO over all 152 clusters (82 positive): full 0.981, capability 0.983, structural 0.915, TLSH kNN 0.773 F1; per-cluster recall/CIs/obf strata.
+- [x] Abstention threshold 357 (train-only); verified coverage 90.9%, other 96.6%, benign 34.1%.
+- [x] Explainability: gain + per-sample `pred_contrib` top-10 + TLSH nearest templates.
+- [x] Hassan-style non-name CLR-header baseline (14 features): F1 0.874 vs capability 0.983; methodology comparison only.
+- [x] Stage 2 rules/kNN with abstention: 24/58 abstain; 33/34 decided correct; Quasar/DcRat abstain.
+- [x] Data decision: freeze at 1,824 rows; no batch 3, no family queue.
+
+## Fixup evaluation (Phase 2.1d, 2026-11-28)
+
+- [x] WS0 snapshot: all brief numbers reproduced; tests were 202, not 192 (Phase 4 added 10); 227 after the fixup, methodfix and OOF tests.
+- [x] WS1 decisions: §40 records D1 approved, D2 not approved, P1–P3 approved, WS6b.
+- [x] WS2 labeler bias: all 498 unverified AsyncRAT rows are MB-signature-only; obfuscated and plain show the same pattern.
+- [x] WS4 cap: train-only 89→10 rows (79 removed); 238/148 → 159/69; DB/splits unchanged.
+- [x] WS5 feature policy: separate `Data/Features/policy/` matrix; four container fields dropped from models.
+- [x] WS6/6b fixup evaluation: grouped OOF threshold (5-fold by cluster); capability OOF F1 .903 [.800,.971] vs P/Invoke .788 [.677,.904] (overlap); PR .988 vs .695 and ROC .980 vs .645 (separate); random leak .960 (+.057); mixed LOCO at 0.5, capability recall .981 FPR .016/.023, P/Invoke FPR .636; see `Docs/results.md`.
+- [x] WS7 Stage 2 eligibility: only AsyncRAT and XWorm qualify; test macro F1 .931 [.807,1.000] on 29 rows; wording says diagnostic 2-family LightGBM, not a result.
+- [x] WS8 temporal caveat: benign dates are 10 collection batches; formats differ; diagnostic only.
+- [x] WS9 gold: 30 rows, 0 filled, 30/30 paths resolve; dry-run reports 0 updates; no `--write`.
+- [ ] WS3/D2 70/30 partition: **not run**, awaiting explicit "approve D2".
+- [x] WS10 docs: results, limitations, REPRODUCE, Plan status lines; §41 OOF method.
+- [x] P4 label audit: 1,540 rows, MB-only 530, multi-source 263, conflicts 107; gold 30/0, no merge.
+- [x] P5 deletion: Data/Gold/review_sheet.md only (review/gold_review_sheet.md kept).
+
+## Phase 5 — matched operating points, errors, thesis package (2026-11-28)
+
+- [x] Matched 95%/90% target recall on train OOF; test/holdout/LOCO tables; P/Invoke and file size use raw thresholds, never 0.5.
+- [x] Single evaluator run: `run_id=c7a21a6c…`, script `6598bfce`, 5 OOF folds; all sections same run.
+- [x] Error analysis: 0 FP / 7 FN at matched 95; F1-optimal 2 FP / 4 FN; 31 matched-95 LOCO misses (24 fold-threshold; 3/5 old positive-only); 2 Stage-2 XWorm→AsyncRAT errors, not `00fe40a8`; 0 holdout FP; 4 obfuscated positives, 2 caught.
+- [x] Label audit refined: 107 conflicts = 14 support / 20 different / 73 tie; verified_other 14/0/42; unverified 20/31.
+- [x] `Docs/FINAL_RESULTS.md`, `Docs/MODEL_CARD.md`, `Docs/CLAIMS.md`; results pointer; limitations/REPRODUCE updated.
+- [x] Tests 234; no deletions, staging or commits; gold 30/0.
+- [ ] D2/WS3: not run; requires explicit approval.
+
 ## Phase 4: Stage 2 (Family Classification)
 
 **Goal:** Distinguish AsyncRAT from Quasar/DcRat/njRAT/etc.
@@ -239,9 +274,9 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
 
 ---
 
-## Immediate Next Steps (while the agent finishes)
+## Immediate Next Steps
 
-- [x] **Wait for the agent** to finish Tasks 1–7
+- [x] Tasks 1–7 are complete
   - 0.1 labeling/carving/import is finished.
 - [x] **Install `dnfile`**: `pip install dnfile` — start reading its docs
   - Listed in `Tools/requirements.txt`.

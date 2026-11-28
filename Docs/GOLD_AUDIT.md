@@ -1,14 +1,20 @@
 # Gold audit — human reviewer instructions
 
 The gold set is a **human audit** of voter precision, not training data. The
-agent must never fill `gold_status` or `gold_family`. This sheet is read-only
+automation must never fill `gold_status` or `gold_family`. This sheet is read-only
 preparation.
+
+Current sheet: **30 rows, 0 missing, 0 filled** against the frozen 1,824-row
+dataset. Fill it only by static review; the merge tool will not run until the
+human is done.
 
 ## Files
 
-- Input: `Data/Gold/gold.csv` (30 rows, human columns blank).
-- Working sheet: `Data/Gold/review/gold_review_sheet.csv` (one row per sample,
-  voter columns prefilled).
+- Input: `Data/Gold/gold.csv` (30 rows, human columns blank; a historical
+  snapshot, not the current label source).
+- Working sheet: `Data/Gold/review/gold_review_sheet.csv` (one row per sample;
+  `current_status`/`current_family` are read from `DataSet.db`, and the old
+  CSV values are preserved in `gold_snapshot_status`/`gold_snapshot_family`).
 - After filling: apply with `Tools/Gold/merge_gold_review.py` (dry-run first).
 
 ## Rules

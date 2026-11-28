@@ -175,6 +175,48 @@ names are read from `static_results[].rule_name`/`malpedia_family`,
 `clamav_results[]` and `unpacked_yara_matches[]`; descriptions are kept for the
 audit trail but do not by themselves decide a family.
 
+## Phase 4 diagnostics (LOCO, abstention, explainability)
+
+```bash
+python3 Tools/Models/evaluate.py --loco-all
+python3 Tools/Models/evaluate.py --calibrate   # prints/saves the abstention threshold
+```
+
+Writes `Data/Features/phase4_results.json` (LOCO, Stage 2 rules, CLR-header
+baseline, explainability, holdout) and `Data/Features/abstention.json`.
+Everything is diagnostic: the dataset gate fails, and the abstention threshold
+is fitted on the training split only. YARAify is not involved.
+
+## Fixup evaluation (cap, feature policy, LOCO, Stage 2 eligibility)
+
+```bash
+# P1 policy matrix (does not overwrite Data/Features/*.npz or Docs/vocab.json)
+python3 Tools/Features/build_matrix.py --feature-policy policy \
+  --out Data/Features/policy --vocab-out Data/Features/policy/vocab.json
+
+# Diagnose: grouped OOF threshold, cap, baselines, random-split leak check,
+# mixed LOCO at 0.5 and at fold thresholds, Stage 2
+python3 Tools/Models/fixup_eval.py
+
+# Automated label-quality audit (read-only; not a gold audit)
+python3 Tools/Audit/label_quality.py
+
+# Read-only error analysis at the matched 95% recall point
+python3 Tools/Audit/error_analysis.py
+```
+
+`fixup_eval.py` writes `Data/Features/fixup_results.json` with
+`generated_at`, `script_sha256`, `run_id`, `oof_folds=5` and
+`threshold_source=train_oof_groupkfold`. The F1-optimal OOF threshold is a
+sensitivity column; the primary external comparison is the fixed 0.5
+probability reference plus PR/ROC. The matched-95 target failed to transfer and
+is sensitivity only; the in-sample threshold is overfit sensitivity. LOCO is
+mixed (positive + round-robin benign clusters), primary at 0.5. The cap is train-only
+and diagnostic; the random stratified run is leaky and labelled as such. The
+70/30 Hassan partition (D2) is **not** run. The external FPR remains the full
+565-row `clrheader2023` holdout. `label_quality.py` writes
+`Data/Audit/label_quality.json`; it is an automated audit, not human gold.
+
 ## Family queue (non-AsyncRAT forks)
 
 ```bash
@@ -200,5 +242,5 @@ python3 Tools/MBDownloader/mb_downloader.py \
 python3 Tools/Gold/review_sheet.py
 ```
 
-It writes `Data/Gold/review_sheet.md` and never fills `gold_status` or
-`gold_family`.
+It writes `Data/Gold/review/gold_review_sheet.csv` and `.md` and never fills
+`gold_status` or `gold_family`.

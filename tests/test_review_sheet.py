@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import csv
 import hashlib
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -35,6 +36,30 @@ def write_gold(data_root: Path, shas: list[str]) -> None:
         for sha in shas:
             writer.writerow({"sha256": sha, "cluster_id": f"c-{sha[:8]}",
                              "current_status": "benign", "current_family": ""})
+
+
+def write_gold_rows(data_root: Path, rows: list[dict]) -> None:
+    path = data_root / "Gold" / "gold.csv"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(GOLD_COLUMNS),
+                                lineterminator="\n")
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row.get(key, "") for key in GOLD_COLUMNS})
+
+
+def write_dataset_db(data_root: Path, rows: list[tuple[str, str, str]]) -> None:
+    path = data_root / "DataSet.db"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(path)
+    try:
+        conn.execute("CREATE TABLE dataset (sha256 TEXT, lbl_sts TEXT, "
+                     "sug_fam TEXT)")
+        conn.executemany("INSERT INTO dataset VALUES (?, ?, ?)", rows)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def write_sources(data_root: Path, rows: list[dict]) -> Path:
@@ -74,6 +99,34 @@ class ReviewSheetTests(unittest.TestCase):
         self.assertEqual(rows[0]["sample_origin"], "fixture")
         self.assertEqual(rows[0]["sample_source"], "fixture")
         self.assertEqual(duplicates, [])
+
+    def test_current_labels_come_from_dataset_db(self):
+        sha = "1" * 64
+        write_gold_rows(self.data, [{
+            "sha256": sha, "cluster_id": "c-1",
+            "current_status": "verified", "current_family": "",
+        }])
+        write_dataset_db(self.data, [(sha, "unverified", "QuasarRAT")])
+        sources = write_sources(self.data, [])
+        rows, _ = review_sheet.build_rows(self.data, self.samples, sources)
+        self.assertEqual(rows[0]["current_status"], "unverified")
+        self.assertEqual(rows[0]["current_family"], "QuasarRAT")
+        self.assertEqual(rows[0]["gold_snapshot_status"], "verified")
+        self.assertEqual(rows[0]["gold_snapshot_family"], "")
+
+    def test_verified_current_family_is_asyncrat(self):
+        sha = "2" * 64
+        write_gold_rows(self.data, [{
+            "sha256": sha, "cluster_id": "c-2",
+            "current_status": "unverified", "current_family": "XWorm",
+        }])
+        write_dataset_db(self.data, [(sha, "verified", "")])
+        sources = write_sources(self.data, [])
+        rows, _ = review_sheet.build_rows(self.data, self.samples, sources)
+        self.assertEqual(rows[0]["current_status"], "verified")
+        self.assertEqual(rows[0]["current_family"], "AsyncRAT")
+        self.assertEqual(rows[0]["gold_snapshot_status"], "unverified")
+        self.assertEqual(rows[0]["gold_snapshot_family"], "XWorm")
 
     def test_absent_hash_stays_missing(self):
         absent = "f" * 64

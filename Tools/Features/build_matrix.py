@@ -34,6 +34,19 @@ STRUCTURAL_FEATURES = (
     "structure_section_count", "structure_file_size",
     "structure_entropy_max", "structure_entropy_mean",
 )
+POLICY_EXCLUDED = (
+    "structure_file_size", "structure_section_count",
+    "structure_entropy_max", "structure_entropy_mean",
+)
+
+
+def select_structural_names(policy: str) -> tuple[str, ...]:
+    if policy == "all":
+        return STRUCTURAL_FEATURES
+    if policy == "policy":
+        return tuple(name for name in STRUCTURAL_FEATURES
+                     if name not in POLICY_EXCLUDED)
+    raise ValueError(f"unknown feature policy: {policy}")
 SEED = 42
 
 
@@ -89,12 +102,13 @@ def build_vocab(train_rows: list[dict],
     return sorted(kept), dict(sorted(kept.items()))
 
 
-def structural_row(structure: dict, sha: str) -> list[float]:
+def structural_row(structure: dict, sha: str,
+                   names: tuple[str, ...] = STRUCTURAL_FEATURES) -> list[float]:
     fields = structure.get(sha)
     if fields is None:
         raise RuntimeError(f"missing structure JSON for primary sample {sha}")
     row = []
-    for name in STRUCTURAL_FEATURES:
+    for name in names:
         value = fields.get(name.replace("structure_", "", 1), 0.0)
         try:
             number = float(value)
@@ -106,7 +120,8 @@ def structural_row(structure: dict, sha: str) -> list[float]:
 
 def build_arrays(rows: list[dict], splits: dict[str, str],
                  carved: dict[str, dict[str, set[str]]],
-                 structure: dict[str, dict], vocab: list[str]) -> dict:
+                 structure: dict[str, dict], vocab: list[str],
+                 structural_names: tuple[str, ...] = STRUCTURAL_FEATURES) -> dict:
     ordered = sorted(rows, key=lambda row: row["sha256"])
     sha_list = [row["sha256"] for row in ordered]
     missing_split = [sha for sha in sha_list if sha not in splits]
@@ -126,7 +141,7 @@ def build_arrays(rows: list[dict], splits: dict[str, str],
                 if column is not None:
                     presence_rows.append(row_index)
                     presence_cols.append(column)
-        structural.append(structural_row(structure, sha))
+        structural.append(structural_row(structure, sha, structural_names))
         y.append(1 if row["label"] == "positive" else 0)
         groups.append(row["cluster_id"])
     presence = csr_matrix(
@@ -173,7 +188,10 @@ def main() -> int:
     parser.add_argument("--vocab-out", type=Path, default=DEFAULT_VOCAB)
     parser.add_argument("--min-clusters", type=int, default=3)
     parser.add_argument("--seed", type=int, default=SEED)
+    parser.add_argument("--feature-policy", choices=("all", "policy"),
+                        default="all")
     args = parser.parse_args()
+    structural_names = select_structural_names(args.feature_policy)
 
     data_root = args.data_root.resolve()
     rows, _missing_date = read_rows(data_root)
@@ -187,7 +205,8 @@ def main() -> int:
 
     train_rows = [row for row in rows if splits.get(row["sha256"]) == "train"]
     vocab, vocab_counts = build_vocab(train_rows, carved, args.min_clusters)
-    arrays = build_arrays(rows, splits, carved, structure, vocab)
+    arrays = build_arrays(rows, splits, carved, structure, vocab,
+                          structural_names)
 
     args.out.mkdir(parents=True, exist_ok=True)
     for split in ("train", "val", "test"):
@@ -202,7 +221,7 @@ def main() -> int:
         }
         save_split(args.out / f"{split}.npz", subset, len(vocab))
 
-    feature_names = vocab + list(STRUCTURAL_FEATURES)
+    feature_names = vocab + list(structural_names)
     args.vocab_out.parent.mkdir(parents=True, exist_ok=True)
     args.vocab_out.write_text(json.dumps({
         "min_clusters": args.min_clusters,
@@ -212,7 +231,8 @@ def main() -> int:
     (args.out / "feature_names.json").write_text(json.dumps({
         "feature_names": feature_names,
         "vocab_size": len(vocab),
-        "structural_names": list(STRUCTURAL_FEATURES),
+        "structural_names": list(structural_names),
+        "feature_policy": args.feature_policy,
     }, indent=2), encoding="utf-8")
     metadata = {
         "rows": len(rows),
@@ -221,6 +241,7 @@ def main() -> int:
         "vocab_size": len(vocab),
         "seed": args.seed,
         "min_clusters": args.min_clusters,
+        "feature_policy": args.feature_policy,
         "carved_samples": carved_count,
         "splits": {
             split: {

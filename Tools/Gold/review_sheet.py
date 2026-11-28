@@ -18,6 +18,7 @@ import argparse
 import csv
 import hashlib
 import json
+import sqlite3
 import statistics
 import sys
 from collections import Counter, defaultdict
@@ -41,6 +42,7 @@ PROVENANCE_COLUMNS = ("file_path", "sample_class", "sample_origin",
 EXTRA_COLUMNS = PROVENANCE_COLUMNS + (
     "file_size", "is_dotnet", "config_present", "obf_lvl",
     *VOTERS, "label_reason", "notes_for_analyst",
+    "gold_snapshot_status", "gold_snapshot_family",
 )
 
 
@@ -141,6 +143,27 @@ def evidence_cell(fields: dict | None) -> str:
     return f"{verdict}/{strength}/{scope}"
 
 
+def derive_current_family(status: str, sug_fam: str) -> str:
+    if status == "verified":
+        return "AsyncRAT"
+    if status == "benign":
+        return "Benign"
+    return str(sug_fam or "")
+
+
+def load_db_labels(data_root: Path) -> dict[str, tuple[str, str]]:
+    path = data_root / "DataSet.db"
+    if not path.is_file():
+        return {}
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    try:
+        return {row[0]: (str(row[1] or ""), str(row[2] or ""))
+                for row in conn.execute(
+                    "SELECT sha256, lbl_sts, sug_fam FROM dataset")}
+    finally:
+        conn.close()
+
+
 def final_fields(data_root: Path, sha256: str) -> dict:
     try:
         return load_final_label(sha256, data_root)
@@ -178,6 +201,7 @@ def build_rows(data_root: Path, samples_root: Path,
     with gold_path.open(encoding="utf-8-sig", newline="") as handle:
         gold_rows = list(csv.DictReader(handle))
     sources = load_sources(sources_path)
+    db_labels = load_db_labels(data_root)
     index, duplicates = build_sample_index(
         samples_root, {str(row.get("sha256") or "") for row in gold_rows})
 
@@ -197,6 +221,11 @@ def build_rows(data_root: Path, samples_root: Path,
         origin, source = provenance(class_name, sources.get(sha256))
         config = fields.get("config")
         row = {column: str(gold.get(column) or "") for column in GOLD_COLUMNS}
+        row["gold_snapshot_status"] = row["current_status"]
+        row["gold_snapshot_family"] = row["current_family"]
+        db_status, db_sug_fam = db_labels.get(sha256, ("", ""))
+        row["current_status"] = db_status
+        row["current_family"] = derive_current_family(db_status, db_sug_fam)
         for column in ("gold_status", "gold_family", "confidence", "analyst",
                        "date", "notes", "evidence"):
             row[column] = ""
@@ -266,9 +295,11 @@ def write_md(path: Path, rows: list[dict], duplicates: list[dict]) -> None:
         lines += [
             f"### {index}. `{row['sha256']}`", "",
             f"- cluster: `{row['cluster_id']}`",
-            f"- gold.csv snapshot: `{row['current_status']}`"
+            f"- current label (DataSet.db): `{row['current_status']}`"
             f" / `{row['current_family'] or '-'}`",
-            f"- fresh label: `{row['_fresh_status'] or 'missing'}`"
+            f"- gold.csv snapshot (historical): `{row['gold_snapshot_status']}`"
+            f" / `{row['gold_snapshot_family'] or '-'}`",
+            f"- fresh aggregated label: `{row['_fresh_status'] or 'missing'}`"
             f" / `{row['_fresh_family'] or '-'}`",
             f"- file: `{row['file_path'] or 'missing'}`"
             f" ({row['file_size'] or '?'} bytes); class: "

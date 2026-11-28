@@ -157,14 +157,14 @@ Report the **abstain rate per class** next to accuracy (e.g. "abstained on 40% o
 
 ## 11. Build order (each step has a check)
 1. **[DONE]** Append-only download ledger `Tools/MBDownloader/samples.db` and label vocabulary (including `benign`) are defined; separate `Data/*.db` files created by the importer.
-2. **[PARTIAL]** Label evidence: all seven voters work; the aggregator writes final labels. DIE has no `diec` binary and YARAify has no key in this run. → check: labels byte-identical after the labeler, parser exceptions captured in `config.parse_error`.
+2. **[DONE]** Label evidence: all seven voters work; the aggregator writes final labels. DIE 4.1.0 and YARAify are active. → check: labels stable after the labeler, parser exceptions captured in `config.parse_error`. Human gold audit remains 0/30.
 2b. **[DONE]** Seven voters + aggregator + `label_evidence` + gold template; `diec` 4.1.0 installed, YARAify key active, ledger signatures backfilled. Only hand-labeling the 30 gold rows remains. → see `Docs/results.md` Phase 1.7.
-3. **[PARTIAL]** Clusters are built (94 clusters, 33 multi-member, 0 mixed-family); benign .NET is now 210 (200 collected, 21 EXE + 179 DLL); other-RAT negatives are still thin. Splits not built. → check: no cluster spans splits; cluster counts reported.
-4. **[PARTIAL]** Five Layer A carvers exist (`ImportTable`, `TypeRef`, `MemberRef`, `AssemblyRef`, `ImplMap`); the training-only vocabulary (`Docs/vocab.json`) is not fitted until splits exist.
-5. **[NOT STARTED]** LightGBM + TLSH kNN + trivial baseline → check: `Docs/results.md` with confusion matrices and per-class coverage.
-6. **[NOT STARTED]** Abstention gate with data-calibrated thresholds → check: abstain rates reported.
-7. **[NOT STARTED]** Ablations for Layer B and extra signals, hand-check ~20 samples in dnSpyEx → check: ablation table.
-8. **[NOT STARTED]** Stage 2 family step and explainer templates.
+3. **[DONE]** Clusters and cluster splits are built; 1,228 clusters, 341 primary rows, 0 cluster spans. Benign is 704 (565 external holdout + 139 other). → check: no cluster spans splits; gate and split validity reported.
+4. **[DONE]** Five Layer A carvers exist (`ImportTable`, `TypeRef`, `MemberRef`, `AssemblyRef`, `ImplMap`) plus structure; the vocabulary is fitted on train clusters only.
+5. **[DONE, DIAGNOSTIC]** LightGBM + TLSH kNN + trivial baseline → check: `Docs/results.md` has confusion matrices, LOCO and coverage. The gate fails, so this is not a result.
+6. **[DONE, DIAGNOSTIC]** Abstention gate with train-calibrated TypeRef+MemberRef threshold → check: abstain rates reported in `Docs/results.md`.
+7. **[PARTIAL]** Ablations for Layer B and extra signals are done (cap, policy, CLR-header); the ~20-sample dnSpyEx human check is still pending.
+8. **[DONE, DIAGNOSTIC]** Stage 2 rules/eligibility + explainer templates; AsyncRAT/XWorm only under P2; no family model claimed.
 9. **[NOT STARTED]** Only then: neural encoder or language-model explainer.
 
 ## 12. Current state (2026-11-27)
@@ -191,3 +191,12 @@ Report the **abstain rate per class** next to accuracy (e.g. "abstained on 40% o
 - Abstention thresholds, ablations, ~20-sample dnSpyEx human check, Stage 2 explainer templates, `Docs/limitations.md`.
 - Neural encoder / language-model explainer (stretch only).
 - Live verification: **AUTHORIZED by user** (`Docs/DECISIONS.md` §35); network is available in the VM and the user accepts real sample downloads. Not yet executed. Synthetic mocked-API tests already cover 429 / cap / error-limit / single-pass / Ctrl+C (12/12 downloader tests). Use `MB_AUTH_KEY` securely; never print or log it.
+
+**Fixup state (2026-11-28):** `DataSet.db` 1,824 rows / 1,228 clusters;
+Stage 1 FAIL (154/52, largest 89 = 57.8%), Stage 2 FAIL; all model numbers
+diagnostic. P1 policy matrix is `Data/Features/policy/`, D1 cap is train-only
+diagnostic, D2 70/30 partition is **not run** (awaiting approval), P3 temporal
+results are diagnostic because benign dates are collection-batch dates.
+Thresholds are grouped 5-fold OOF; Phase 5 adds matched 95%/90% target recall,
+LOCO at the matched point, error analysis and the FINAL_RESULTS/MODEL_CARD/
+CLAIMS package. The label audit is automated, not human gold. D2 is not run. Tests: 234. No commits, no network, no new data.

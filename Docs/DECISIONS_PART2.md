@@ -75,7 +75,7 @@ Follow `AGENTS.md` strictly: no commits, surgical changes, simplicity first, goa
 - **Q11 — `config_keys` contents:** store the **raw values used for matching** (mutex, key, hosts) for audit; labeling metadata only, never model features.
   - User noted they had not seen the config keys. Read-only check of `Data/Labels/*.json`: 180 files, 113 non-null `config` — 51 with `mutex`/`key`/`ports`, 50 with `hosts`, 62 `parse_error`, 67 null. So config-key matching can apply to only about 51 samples; the rest fall back to TLSH.
 - **Q12 — `split` ownership:** the clusterer never writes `split`; a later split tool writes its own JSON and only the importer fills the column.
-- **Q13 — `tlsh` installation:** the user does not authorize me to make a network install; the fixer guy installs it. Code checks the import at startup and fails with an exact message if missing.
+- **Q13 — `tlsh` installation:** the user does not authorize me to make a network install; the implementation installs it. Code checks the import at startup and fails with an exact message if missing.
 
 ## Why (batch 3)
 
@@ -85,7 +85,7 @@ Follow `AGENTS.md` strictly: no commits, surgical changes, simplicity first, goa
 - **Q12:** keeping `split` owned by a future tool prevents the clusterer from accidentally leaking split information into clustering.
 - **Q13:** a clear import error is safer than guessing an API or making a network install without authorization.
 
-## Reminder for the fixer guy
+## Reminder for the implementation
 
 > if you reading this install tlsh
 
@@ -105,7 +105,7 @@ Follow `AGENTS.md` strictly: no commits, surgical changes, simplicity first, goa
 - **Q17:** stdout gives an immediate check; `Docs/results.md` is the project's planned reporting file, so the effective cluster count belongs there rather than in a new ad-hoc file.
 - **Q18:** identical failure policy for small files and corrupt files keeps the rule simple and preserves 180-row coverage.
 
-## Post-0.1 review findings (reported by fixer guy, 2026-11-27)
+## Post-0.1 review findings (reported during implementation review, 2026-11-27)
 
 These are **reported findings and recommended fixes**, not decisions. None are implemented here unless stated.
 
@@ -132,7 +132,7 @@ These are **reported findings and recommended fixes**, not decisions. None are i
 
 ### Verified / not tested (as reported)
 
-- Verified by fixer: `test_mb.py` 12/12, `test_labeler.py` PASS, `test_importer.py` PASS; carvers produce 134 / 5 / 10 JSONs per tool; DB state 180 / 48 / 10 / no `OtherMalwares.db`.
+- Verified by the implementation: `test_mb.py` 12/12, `test_labeler.py` PASS, `test_importer.py` PASS; carvers produce 134 / 5 / 10 JSONs per tool; DB state 180 / 48 / 10 / no `OtherMalwares.db`.
 - Not tested: live MalwareBazaar calls (authorized but not run), clustering/splits/models/abstention (not implemented), carver automated tests (none).
 - **Recommended next step:** resolve the hard-negative promotion question (#1) before any model work.
 
