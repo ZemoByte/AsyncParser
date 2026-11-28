@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """YARAify hash-lookup voter.
 
-Requires `YARAIFY_AUTH_KEY` (or --auth-key). Without a key it writes honest
-no_match evidence for every sample so the marker exists and the pipeline does
-not block. Family-specific rule names are medium evidence; generic matches are
-weak. Never prints the key.
+Uses one abuse.ch key for both services: `YARAIFY_AUTH_KEY` first, then
+`MB_AUTH_KEY` (from the environment or the shared `.env`). Without a key it
+writes honest no_match evidence for every sample so the marker exists and the
+pipeline does not block. Family-specific rule names are medium evidence;
+generic matches are weak. Never prints the key.
 """
 
 from __future__ import annotations
@@ -48,6 +49,34 @@ RULE_FAMILY = {
 }
 
 
+def read_env_file(path: Path) -> dict[str, str]:
+    values: dict[str, str] = {}
+    if not path.is_file():
+        return values
+    for raw in path.read_text(encoding="utf-8").splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip().strip('"').strip("'")
+    return values
+
+
+def resolve_auth_key(cli_key: str = "", env_path: Path | None = None) -> str:
+    key = str(cli_key or "").strip()
+    if key:
+        return key
+    key = os.environ.get("YARAIFY_AUTH_KEY", "").strip()
+    if key:
+        return key
+    key = os.environ.get("MB_AUTH_KEY", "").strip()
+    if key:
+        return key
+    values = read_env_file(env_path or (ROOT / ".env"))
+    return (values.get("YARAIFY_AUTH_KEY")
+            or values.get("MB_AUTH_KEY") or "").strip()
+
+
 def families_for_names(names) -> list[str]:
     families = set()
     for name in names:
@@ -58,33 +87,133 @@ def families_for_names(names) -> list[str]:
     return sorted(families)
 
 
-def collect_names(payload) -> list[str]:
+def iter_tasks(payload) -> list[dict]:
+    """Return the task list from both response shapes."""
+    if not isinstance(payload, dict):
+        return []
+    data = payload.get("data")
+    tasks = None
+    if isinstance(data, dict):
+        tasks = data.get("tasks")
+    elif isinstance(data, list):
+        tasks = data
+    if not isinstance(tasks, list):
+        tasks = payload.get("tasks")
+    if not isinstance(tasks, list):
+        return []
+    return [item for item in tasks if isinstance(item, dict)]
+
+
+def collect_metadata_signatures(payload) -> list[str]:
+    if not isinstance(payload, dict):
+        return []
+    data = payload.get("data")
+    if isinstance(data, dict):
+        metadata = data.get("metadata")
+        if isinstance(metadata, dict) and metadata.get("signature"):
+            return [str(metadata["signature"])]
+    return []
+
+
+def collect_clamav_results(payload) -> list[str]:
     names: list[str] = []
-    data = payload.get("data") if isinstance(payload, dict) else None
-    if not isinstance(data, list):
-        data = payload.get("tasks") if isinstance(payload, dict) else None
-    if not isinstance(data, list):
-        return names
-    for item in data:
-        if not isinstance(item, dict):
-            continue
-        signature = item.get("signature")
-        if signature:
-            names.append(str(signature))
-        tasks = item.get("tasks")
-        if isinstance(tasks, list):
-            for task in tasks:
-                if not isinstance(task, dict):
-                    continue
-                for key in ("rule_name", "description"):
-                    if task.get(key):
-                        names.append(str(task[key]))
-                rules = task.get("yara_rules")
-                if isinstance(rules, list):
-                    for rule in rules:
-                        if isinstance(rule, dict) and rule.get("rule_name"):
-                            names.append(str(rule["rule_name"]))
+    for task in iter_tasks(payload):
+        for value in task.get("clamav_results") or []:
+            if isinstance(value, str):
+                names.append(value)
     return names
+
+
+def collect_structured_names(payload) -> list[str]:
+    """High-authority names: rule names, families and unpacked rules."""
+    names = list(collect_metadata_signatures(payload))
+    for task in iter_tasks(payload):
+        if task.get("signature"):
+            names.append(str(task["signature"]))
+        for result in task.get("static_results") or []:
+            if not isinstance(result, dict):
+                continue
+            for key in ("rule_name", "malpedia_family"):
+                if result.get(key):
+                    names.append(str(result[key]))
+        for unpack in task.get("unpack_results") or []:
+            if not isinstance(unpack, dict):
+                continue
+            for match in unpack.get("unpacked_yara_matches") or []:
+                if isinstance(match, dict) and match.get("rule_name"):
+                    names.append(str(match["rule_name"]))
+                elif isinstance(match, str):
+                    names.append(match)
+        for rule in task.get("yara_rules") or []:
+            if isinstance(rule, dict) and rule.get("rule_name"):
+                names.append(str(rule["rule_name"]))
+            elif isinstance(rule, str):
+                names.append(rule)
+    return names
+
+
+def collect_names(payload) -> list[str]:
+    """All names for the audit trail (descriptions included)."""
+    names = collect_structured_names(payload)
+    names.extend(collect_clamav_results(payload))
+    for task in iter_tasks(payload):
+        for result in task.get("static_results") or []:
+            if isinstance(result, dict):
+                for key in ("description",):
+                    if result.get(key):
+                        names.append(str(result[key]))
+        for key in ("rule_name", "description"):
+            if task.get(key):
+                names.append(str(task[key]))
+        for rule in task.get("yara_rules") or []:
+            if isinstance(rule, dict):
+                for key in ("rule_name", "description"):
+                    if rule.get(key):
+                        names.append(str(rule[key]))
+            elif isinstance(rule, str):
+                names.append(rule)
+    return list(dict.fromkeys(names))
+
+
+def evaluate_payload(payload) -> tuple[str, dict]:
+    """Resolve one family from YARAify evidence.
+
+    Static rule names are authoritative. Curated names from metadata/ClamAV
+    only *disambiguate* conflicting static rules when they agree with one of
+    them; they never override a single static family.
+    """
+    names = collect_names(payload)
+    structured = set(families_for_names(collect_structured_names(payload)))
+    curated = set(families_for_names(
+        collect_metadata_signatures(payload) + collect_clamav_results(payload)))
+    description = set(families_for_names(names))
+    raw = {
+        "scope": "lineage" if "AsyncRAT" in description else "family",
+        "origin": "yaraify",
+        "query_status": payload.get("query_status") if isinstance(payload, dict) else None,
+        "rule_names": names[:50],
+        "families": sorted(description),
+        "structured_families": sorted(structured),
+        "curated_families": sorted(curated),
+    }
+    if structured or curated:
+        combined = structured | curated
+        if len(combined) == 1:
+            raw["resolved_by"] = "static" if structured else "curated"
+            return next(iter(combined)), {"strength": "medium", "raw": raw}
+        if len(structured) > 1 and len(curated) == 1 and curated <= structured:
+            raw["resolved_by"] = "curated_disambiguation"
+            return next(iter(curated)), {"strength": "medium", "raw": raw}
+        raw["reason"] = "multiple_families"
+        return "no_match", {"strength": "weak", "raw": raw}
+    if len(description) == 1:
+        raw["resolved_by"] = "description"
+        return next(iter(description)), {"strength": "medium", "raw": raw}
+    if len(description) > 1:
+        raw["reason"] = "multiple_families"
+        return "no_match", {"strength": "weak", "raw": raw}
+    raw["reason"] = "no_family"
+    return "no_match", {"strength": "weak", "raw": raw}
 
 
 def lookup(sha256: str, auth_key: str, timeout: int) -> tuple[str, dict]:
@@ -108,27 +237,7 @@ def lookup(sha256: str, auth_key: str, timeout: int) -> tuple[str, dict]:
         return "no_match", {"strength": "weak", "raw": {
             "scope": "family", "origin": "yaraify",
             "reason": f"json_error:{exc}"}}
-    names = collect_names(payload)
-    families = families_for_names(names)
-    raw = {
-        "scope": "lineage" if "AsyncRAT" in families else "family",
-        "origin": "yaraify",
-        "query_status": payload.get("query_status") if isinstance(payload, dict) else None,
-        "rule_names": names[:50],
-        "families": families,
-    }
-    if len(families) == 1:
-        strength = "medium"
-        verdict = families[0]
-    elif len(families) > 1:
-        strength = "weak"
-        verdict = "no_match"
-        raw["reason"] = "multiple_families"
-    else:
-        strength = "weak"
-        verdict = "no_match"
-        raw["reason"] = "no_family"
-    return verdict, {"strength": strength, "raw": raw}
+    return evaluate_payload(payload)
 
 
 def main() -> int:
@@ -144,7 +253,7 @@ def main() -> int:
 
     samples_root = args.samples_root.resolve()
     out_root = args.out.resolve()
-    auth_key = str(args.auth_key or "").strip()
+    auth_key = resolve_auth_key(args.auth_key)
     source_version = "yaraify@api_v1"
 
     hits = []

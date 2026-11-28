@@ -19,6 +19,7 @@ if str(ROOT) not in sys.path:
 
 from Tools._label_common import load_final_label, load_gold_labels  # noqa: E402
 from Tools.Clustering.clusterer import family_of  # noqa: E402
+from Tools._gate import evaluate_gate  # noqa: E402
 
 DEFAULT_DATA = ROOT / "Data"
 DEFAULT_SAMPLES = ROOT / "Samples"
@@ -205,53 +206,32 @@ def main() -> int:
                  f"{benign_primary_stats['share']:.1f}% | "
                  f"{benign_primary_stats['singletons']} |")
 
-    stage1 = {
-        "AsyncRAT.db": (
-            class_stats.get("AsyncRAT.db", {"clusters": 0, "share": 100.0})["clusters"] >= 10
-            and class_stats.get("AsyncRAT.db", {"clusters": 0, "share": 100.0})["share"] <= 50.0
-        ),
-        "Benign primary": (
-            benign_primary_stats["clusters"] >= 10
-            and benign_primary_stats["share"] <= 50.0
-        ),
-    }
-    family_rows: dict[str, list[str]] = defaultdict(list)
-    for row in rows:
-        if row["lbl_sts"] == "verified":
-            family_rows["AsyncRAT"].append(row["cluster_id"])
-        elif row["lbl_sts"] == "verified_other" and row["sug_fam"]:
-            family_rows[row["sug_fam"]].append(row["cluster_id"])
-    family_stats = {}
-    for family, family_cluster_ids in family_rows.items():
-        counts = Counter(family_cluster_ids)
-        sizes = sorted(counts.values(), reverse=True)
-        share = 100.0 * sizes[0] / len(family_cluster_ids) if family_cluster_ids else 100.0
-        family_stats[family] = {
-            "rows": len(family_cluster_ids), "clusters": len(counts),
-            "largest": sizes[0] if sizes else 0, "share": share,
-            "pass": len(counts) >= 2 and share <= 50.0,
-        }
-    stage2_ok = len(family_stats) >= 2 and all(
-        item["pass"] for item in family_stats.values()
-    )
+    gate = evaluate_gate(data_root)
+    family_stats = gate["stage2"]["families"]
     lines += ["", "## Stage 2 families", "",
               "| family | rows | clusters | largest share | result |",
               "|---|---:|---:|---:|---|"]
     for family, item in sorted(family_stats.items()):
         lines.append(f"| `{family}` | {item['rows']} | {item['clusters']} | "
-                     f"{item['share']:.1f}% | {'PASS' if item['pass'] else 'FAIL'} |")
+                     f"{item['share']:.1f}% | {'PASS' if item['ok'] else 'FAIL'} |")
     lines += ["", "## Dataset gate", "",
               "| gate | result | detail |", "|---|---|---|"]
-    for key, ok in stage1.items():
-        stats = (benign_primary_stats if key == "Benign primary"
-                 else class_stats.get(key, {"clusters": 0, "share": 100.0}))
-        lines.append(f"| Stage 1 `{key}` | {'PASS' if ok else 'FAIL'} | "
+    for label, stats in (("AsyncRAT.db", gate["stage1"]["asyncrat"]),
+                         ("Benign active", gate["stage1"]["benign"])):
+        lines.append(f"| Stage 1 `{label}` | {'PASS' if stats['ok'] else 'FAIL'} | "
                      f"{stats['clusters']} clusters, largest {stats['share']:.1f}% "
-                     f"(target 20 clusters) |")
-    lines.append(f"| Stage 2 | {'PASS' if stage2_ok else 'FAIL'} | "
-                 f"{len(family_stats)} families; each needs >=2 clusters and <=50% share |")
-    lines.append(f"| Overall | {'PASS' if all(stage1.values()) and stage2_ok else 'FAIL'} "
+                     f"(target 10 clusters) |")
+    lines.append(f"| Stage 2 | {'PASS' if gate['stage2']['ok'] else 'FAIL'} | "
+                 f"{len(family_stats)} families; each needs >=2 clusters and "
+                 f"<=50% share |")
+    lines.append(f"| Overall | {'PASS' if gate['overall'] else 'FAIL'} "
                  f"| no enforcement |")
+
+    cluster_json_count = len(list((data_root / "Clusters").glob("*.json")))
+    if cluster_json_count != len(rows):
+        sys.stderr.write(
+            f"WARNING: cluster JSON count {cluster_json_count} != dataset rows "
+            f"{len(rows)}\n")
 
     lines += ["", "## Clusters", "",
               "| metric | value |", "|---|---:|",

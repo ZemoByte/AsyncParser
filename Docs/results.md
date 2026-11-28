@@ -1,5 +1,159 @@
 # results.md — run reports
 
+## Phase 1.6 — historical AsyncRAT from the full export (2026-11-28)
+
+**DIAGNOSTIC ONLY — dataset gate failed; not a result.**
+
+Historical samples were pulled from the MalwareBazaar **full export** (not the
+recent `get_taginfo` window). Batch 1 added **50 verified AsyncRAT samples in
+34 new clusters**. The pooled class is now **152 verified in 36 clusters**, but
+the pre-existing 88-sample 2023–2026 cluster keeps the largest share at
+**57.9%**, so Stage 1 still fails on the 50% criterion. Batch 2 was **not**
+run: P0.2 required `>=10 new clusters AND pooled share <=50%`; the clusters
+condition passed (34), the pooled share did not.
+
+### Export and batch 1
+
+Archive: `full.csv.zip`, 220.1 MiB, export timestamp **2026-11-27 19:40:17
+UTC**. Streamed from the zip; the CSV is never extracted. The URL (which
+contains the API key) is never logged.
+
+| stage | rows |
+|---|---:|
+| parsed CSV rows | 1,181,317 (1,181,316 physical data lines) |
+| signature `AsyncRAT`/`AsyncRat` | 10,922 |
+| `file_type_guess=exe` | 7,930 |
+| already in ledger | 233 |
+| already in selection manifest | 0 |
+| selected (50/year, 2020–2026) | **350** |
+| downloaded / failed | **350 / 0** |
+| TLSH rejected (`<=100` to a selected sample) | 557 |
+| export TLSH re-verified after download | 15/15 exact matches |
+
+Batch 1 label yield (350 samples):
+
+| label | rows |
+|---|---:|
+| `verified` client | 50 |
+| `reference_only` (file name says stub) | 3 |
+| `review` | 1 |
+| `unverified` | 232 |
+| `rejected_non_dotnet` | 64 |
+| **.NET yield** | **286 / 350 (81.7%)** |
+
+The 232 unverified samples are .NET but only the MalwareBazaar signature
+supports AsyncRAT; `rat_king_parser`, own YARA, Malpedia and Elastic all
+return `no_match` on these historical builds. They stay out of training.
+
+### Gate before/after
+
+| state | rows | AsyncRAT rows / clusters / largest share | Benign primary | Stage 2 | overall |
+|---|---:|---|---|---|---|
+| after Phase 1.5 | 943 | 103 / 6 / 76.7% | PASS 71 / 13.7% | FAIL | FAIL |
+| after batch 1 (before audit) | 1,293 | 156 / 37 / 57.1% | PASS 71 / 13.7% | FAIL | FAIL |
+| after batch 1 + scope audit | 1,293 | **152 / 36 / 57.9%** | PASS 71 / 13.7% | FAIL | FAIL |
+
+Stage 2 remains FAIL: `AsyncRAT` 152 / 36 / 57.9% and `XWorm` 9 / 2 / 77.8%.
+XWorm was not touched by this batch, so Stage 2 cannot pass from AsyncRAT
+downloads alone.
+
+### Split validity (greedy whole-cluster packing)
+
+`Tools/Splits/split.py` now packs whole clusters by **rows per class**
+(70/15/15), largest cluster first, into the split furthest below its row
+target (ties by `cluster_id`). No cluster spans splits.
+
+| split | rows | positives | negatives | pos clusters | neg clusters | largest pos share | degenerate |
+|---|---:|---:|---:|---:|---:|---:|---|
+| train | 203 | 113 | 90 | 3 | 32 | 77.9% | **yes** |
+| val | 43 | 24 | 19 | 18 | 19 | 20.8% | no |
+| test | 44 | 24 | 20 | 17 | 19 | 29.2% | no |
+| temporal train | 202 | 112 | 90 | 38 | 44 | 42.9% | **yes** |
+| temporal val | 43 | 24 | 19 | 3 | 17 | 83.3% | **yes** |
+| temporal test | 45 | 25 | 20 | 4 | 17 | 76.9% | **yes** |
+
+- 290 primary rows (161 positives, 129 negatives); 0 cluster spans.
+- The cluster split is still degenerate because **train** is dominated by one
+  88-sample cluster (77.9% > 40%) and has only 3 positive clusters. The test
+  side is healthy (24 positives, 17 clusters).
+- Test thresholds pass (`test_positives=24 >= 20`,
+  `test_positive_clusters=17 >= 5`), but the split degeneracy alone forces
+  DIAGNOSTIC ONLY.
+
+### Matrix and baselines (test = 44 rows, 24 positives, 17 clusters)
+
+- 290 rows / 161 positives / 108 clusters; vocabulary **2,048** (train-only,
+  min cluster DF = 3); 11 dense structural counts.
+- `validity`: `structural_confound=false`, `loco_inspect=true`,
+  `split_degenerate=true`, `not_a_result=true`.
+
+| model | precision | recall | F1 | PR-AUC |
+|---|---:|---:|---:|---:|
+| majority | 0.545 | 1.000 | 0.706 | 0.545 |
+| logistic, structural only | 1.000 | 0.542 | 0.703 | 0.926 |
+| TLSH kNN | 0.941 | 0.667 | 0.780 | 0.809 |
+| LightGBM, full | 0.957 | 0.917 | **0.936** | 0.941 |
+| LightGBM, capability only | 0.957 | 0.917 | **0.936** | 0.941 |
+| LightGBM, structural only | 0.870 | 0.833 | 0.851 | 0.938 |
+
+- Capability features match the full model; structural-only is 0.085 F1
+  behind, so there is no structural confound — but this is still not a result
+  (degenerate train, LOCO perfect with 3 train clusters).
+- Per-cluster recall: 15 of 16 positive test clusters at 1.0; one singleton
+  missed (TLSH distance 556 to any train cluster).
+- **Leakage flag:** one 7-row test cluster is at TLSH distance **17** from a
+  train cluster, below the 100 threshold. Report it; do not claim.
+
+### LOCO (triggered: 3 train positive clusters < 10)
+
+| rows | positives | precision | recall | F1 | PR-AUC |
+|---:|---:|---:|---:|---:|---:|
+| 203 | 113 | 1.000 | 1.000 | 1.000 | 1.000 |
+
+Perfect LOCO with three near-duplicate-heavy clusters measures within-family
+consistency, not independent-campaign generalization (`loco_inspect=true`).
+
+### External benign holdout (Hassan 2023)
+
+- 565 unique .NET EXEs, still excluded from train/val/test.
+- Holdout FPR for the diagnostic full model: **28 / 565 = 4.96%** (0.35% in
+  Phase 1.5; the historical positives made the model less conservative).
+
+### Scope audit (server/builder)
+
+`Tools/Audit/reference_only.py` flags `server|builder|stub|panel` file names
+(labeling metadata only, never a feature). **4 verified samples** were marked
+`reference_only` (`previous_status=verified` preserved); 3 are batch-1
+samples. They are excluded from `AsyncRAT.db` and from every split.
+A static spot-check of **20 verified samples** (EXEs, no DLLs) found no
+server/builder/panel/listener types; details in `Data/Audit/spot_check.json`.
+
+### Integrity
+
+- DataSet: **1,293 rows**, 0 NULL `cluster_id`, **734** clusters.
+- Evidence: **9,051 rows** = 7 × 1,293.
+- Class DBs: AsyncRAT **152**, OtherMalwares 9, Benign 704; 4
+  `reference_only` and 428 unassigned in DataSet only.
+- 1,293 labels / cluster JSONs; 1,187 structure JSONs and 1,187 JSONs per
+  carver (106 non-.NET samples have no metadata); 290 current split rows
+  (294 split JSONs including 4 stale reference_only files).
+- `is_gold=0`; no sample deletion; no sample execution.
+- Git: generated `Data/` outputs and DBs untracked, `git ls-files '*.json'`
+  is 0; `Data/BenignSources.csv`, `Data/Gold/gold.csv` and the ledger DB stay
+  tracked. See `Docs/REPRODUCE.md`.
+
+### Limitations
+
+- Stage 1 fails only on the largest-share criterion; Stage 2 fails on XWorm
+  (9 samples, 2 clusters, 77.8%) and cannot be fixed by AsyncRAT batches.
+- 232 of 350 historical .NET samples are unverified because the independent
+  voters do not recognize those builds; only the MB signature does.
+- Train remains dominated by one 88-sample cluster, so every baseline number
+  is DIAGNOSTIC ONLY even if the dataset gate later passes.
+- One test cluster is within TLSH distance 17 of train (leakage flag).
+- Batch 2 (the remaining 350 of the 700 target) was deliberately not run.
+
+
 ## Phase 1.5 — gate, MB batch, diagnostic baselines (2026-11-28)
 
 **DIAGNOSTIC ONLY — dataset gate failed; not a result.**

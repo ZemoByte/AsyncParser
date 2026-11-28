@@ -111,6 +111,17 @@ def is_dotnet_of(sha: str, labels_root: Path) -> bool:
     return bool(fields.get("is_dotnet"))
 
 
+def tls_pair_match(a: str, b: str, hashes: dict, threshold: int) -> bool:
+    """TLSH pair match; a diff failure warns and falls back to config keys."""
+    if a not in hashes or b not in hashes:
+        return False
+    try:
+        return tlsh.diff(hashes[a], hashes[b]) <= threshold
+    except Exception as exc:
+        sys.stderr.write(f"WARNING: TLSH diff failed for {a} vs {b}: {exc}\n")
+        return False
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Cluster payload samples by TLSH and config keys")
     parser.add_argument("--samples-root", type=Path, default=DEFAULT_SAMPLES)
@@ -189,13 +200,7 @@ def main() -> int:
             # Family guard: never union two samples with known differing families
             if families[a] and families[b] and families[a] != families[b]:
                 continue
-            tls_match = False
-            if a in hashes and b in hashes:
-                try:
-                    if tlsh.diff(hashes[a], hashes[b]) <= threshold:
-                        tls_match = True
-                except Exception:
-                    pass
+            tls_match = tls_pair_match(a, b, hashes, threshold)
             ca, cb = configs.get(a, frozenset()), configs.get(b, frozenset())
             config_match = False
             if is_dotnet_map[a] and is_dotnet_map[b]:

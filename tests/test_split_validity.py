@@ -103,6 +103,21 @@ class ValidityTests(unittest.TestCase):
         self.assertTrue(report["structural_confound"])
         self.assertTrue(report["not_a_result"])
 
+    def test_degenerate_split_forces_diagnostic(self):
+        test = self.split_dict([f"c{i}" for i in range(6)] * 5)
+        train = self.split_dict(["t1"] * 40)
+        results = [{"name": "lightgbm_full", "metrics": {"f1": 0.9}},
+                   {"name": "lightgbm_structural_only", "metrics": {"f1": 0.5}}]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Splits").mkdir()
+            (root / "Splits" / ".done").write_text('{"degenerate": true}')
+            report = baseline.validity_report(train, test, results,
+                                              {"triggered": False}, root)
+        self.assertTrue(report["split_degenerate"])
+        self.assertTrue(report["not_a_result"])
+        self.assertIn("cluster split is degenerate", report["reasons"])
+
     def test_loco_perfect_with_few_clusters_is_inspected(self):
         test = self.split_dict([f"c{i}" for i in range(6)] * 5)
         train = self.split_dict(["t1"] * 20 + ["t2"] * 10 + ["t3"] * 10)

@@ -90,6 +90,32 @@ def target_class_for_row(label: dict, is_gold: int) -> str | None:
     return target_class_db(label)
 
 
+def split_assignment(sha256: str, label: dict, is_gold: int,
+                     splits: dict[str, dict], splits_present: bool,
+                     existing_split: str | None,
+                     existing_temporal: str | None) -> tuple[str | None, str | None]:
+    """Only primary, non-gold rows get a split.
+
+    When the split marker exists, the split tool is authoritative: a missing
+    split file means NULL (this clears stale assignments). Without the marker
+    the importer preserves what was already in the DB.
+    """
+    status = str(label.get("lbl_sts") or "")
+    source = str(label.get("source") or "")
+    origin = str(label.get("origin") or "")
+    fixture = source == "fixture" or origin == "fixture"
+    allowed = not is_gold and (
+        status in {"verified", "verified_other"}
+        or (status == "benign" and not fixture)
+    )
+    if not allowed:
+        return None, None
+    if not splits_present:
+        return existing_split, existing_temporal
+    row = splits.get(sha256, {})
+    return row.get("cluster_split"), row.get("temporal_split")
+
+
 def safe_column(name: str) -> str:
     cleaned = "".join(ch if ch.isalnum() or ch == "_" else "_" for ch in name)
     if not cleaned or not cleaned[0].isalpha() and cleaned[0] != "_":
@@ -465,6 +491,7 @@ def main() -> int:
         existing_temporal = dict(
             conn_dataset.execute("SELECT sha256, split_temporal FROM dataset")
         )
+        splits_present = (SPLITS_DIR / ".done").is_file()
         target_shas: dict[str, set[str]] = {
             "AsyncRAT.db": set(), "OtherMalwares.db": set(), "Benign.db": set(),
         }
@@ -491,10 +518,9 @@ def main() -> int:
                 row["obf_lvl"] = die_obf[sha256]
             row["cluster_id"] = clusters[sha256]
             row["first_seen"] = sample.get("first_seen") or None
-            split_row = splits.get(sha256, {})
-            row["split"] = split_row.get("cluster_split", existing_splits.get(sha256))
-            row["split_temporal"] = split_row.get(
-                "temporal_split", existing_temporal.get(sha256)
+            row["split"], row["split_temporal"] = split_assignment(
+                sha256, label, is_gold, splits, splits_present,
+                existing_splits.get(sha256), existing_temporal.get(sha256),
             )
             row["lbl_src"] = label.get("lbl_src") or (
                 "hand_benign" if label.get("lbl_sts") == "benign" else "parser_only"

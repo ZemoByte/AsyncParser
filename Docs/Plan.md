@@ -34,7 +34,7 @@ Labels are decided by **independent static voters**, not by one parser. The rule
 | Malpedia family rules (`/api/get/yara/<family_id>`; IDs `win.asyncrat`, `win.dcrat`, `win.xworm`, `win.quasar_rat`, `win.venom`, `win.njrat`, `win.remcos`, `win.xenorat`) | `yara:malpedia` | family / no match | strong/medium | implemented — 71 hits; AsyncRAT scope lineage |
 | signature-base rules | `yara:signature-base` | family / no match | medium | TODO — no AsyncRAT-specific rule found in a tree scan; verify before adding |
 | MalwareBazaar metadata (`signature`, `tags`, `vendor_intel`, `intelligence.clamav`, `code_sign`) | `metadata:mb` | family / benign / unknown | medium (`signature`), weak (tags, vendor_intel, ClamAV) | implemented — weak ledger tags only; `signature` column missing |
-| YARAify hash lookup (`lookup_hash`, `search_term=<sha256>`) | `lookup:yaraify` | family / no match | medium if a family-specific rule matched; weak if generic | implemented — needs `YARAIFY_AUTH_KEY`; no-key run is no_match |
+| YARAify hash lookup (`lookup_hash`, `search_term=<sha256>`) | `lookup:yaraify` | family / no match | medium if a family-specific rule matched; weak if generic | implemented — shared abuse.ch key (`YARAIFY_AUTH_KEY` or `MB_AUTH_KEY`); 0 rule hits on the current corpus |
 | Config/default-value checks (`%MTX%`, `%Ports%`, `%Hosts%`, `%Key%`, `%Certificate%`, `%Serversignature%`, ports `6606/7707/8808`, `NYAN CAT`) | `static:config` | AsyncRAT stub / unknown | medium | TODO |
 | Detect It Easy (`diec -j -d -e`) | `attribute:die` | **`obf_lvl` only, never a family vote** | strong for a named obfuscator | implemented — `diec` not installed, so `obf_lvl=unknown` |
 
@@ -158,7 +158,7 @@ Report the **abstain rate per class** next to accuracy (e.g. "abstained on 40% o
 ## 11. Build order (each step has a check)
 1. **[DONE]** Append-only download ledger `Tools/MBDownloader/samples.db` and label vocabulary (including `benign`) are defined; separate `Data/*.db` files created by the importer.
 2. **[PARTIAL]** Label evidence: all seven voters work; the aggregator writes final labels. DIE has no `diec` binary and YARAify has no key in this run. → check: labels byte-identical after the labeler, parser exceptions captured in `config.parse_error`.
-2b. **[PARTIAL]** Seven voters + aggregator + `label_evidence` + gold template done; DIE/YARAify external gaps and human gold labels remain. → check: 2660 evidence rows; 58 `verified`, 9 `verified_other`, 1 `review`; class DBs 58/9/210; tests 47/47.
+2b. **[DONE]** Seven voters + aggregator + `label_evidence` + gold template; `diec` 4.1.0 installed, YARAify key active, ledger signatures backfilled. Only hand-labeling the 30 gold rows remains. → see `Docs/results.md` Phase 1.7.
 3. **[PARTIAL]** Clusters are built (94 clusters, 33 multi-member, 0 mixed-family); benign .NET is now 210 (200 collected, 21 EXE + 179 DLL); other-RAT negatives are still thin. Splits not built. → check: no cluster spans splits; cluster counts reported.
 4. **[PARTIAL]** Five Layer A carvers exist (`ImportTable`, `TypeRef`, `MemberRef`, `AssemblyRef`, `ImplMap`); the training-only vocabulary (`Docs/vocab.json`) is not fitted until splits exist.
 5. **[NOT STARTED]** LightGBM + TLSH kNN + trivial baseline → check: `Docs/results.md` with confusion matrices and per-class coverage.
@@ -184,7 +184,7 @@ Report the **abstain rate per class** next to accuracy (e.g. "abstained on 40% o
 
 **Not done yet:**
 - Obfuscator fingerprint detection: two markers implemented (`ConfusedByAttribute`, `LoGiCdotNetAttribute`); no matches in 380 samples. DIE (`diec -j -d -e`) is the planned replacement for `obf_lvl`; it is not installed yet.
-- Label evidence: all seven voters + aggregator + `label_evidence` are built. Real gaps: `diec` not installed (`obf_lvl` unknown), `YARAIFY_AUTH_KEY` not used in this task, MB ledger has no `signature`, and the 30-row gold set is not hand-labeled. P2.1 collected 200 benign (21 EXE/179 DLL) + 10 hand-built = 210; final dataset 380 rows. See `Docs/results.md`.
+- Label evidence: all seven voters + aggregator + `label_evidence` are built. Gaps closed in Phase 1.7: `diec` 4.1.0 (Fedora 45 RPM + Qt5 + current db), YARAify via the shared key, MB `signature` backfilled (0 NULL). The 30-row gold set is still not hand-labeled. P2.1 collected 200 benign (21 EXE/179 DLL) + 10 hand-built = 210; final dataset 380 rows. See `Docs/results.md`.
 - Reference archive contents inspection and mapping. `Reference/AsyncRAT-C-Sharp` is a gitignored source checkout; `Reference/vx-underground` and `Reference/Ultimate-Rat-Collection` hold the builder archives/READMEs (not extracted or run); `Reference/Elastic` and `Reference/Malpedia` hold the local YARA rules. CAPE is no longer planned (superseded by the independent voters; do not add it unless it can run standalone).
 - Layer A extractor and `Docs/vocab.json`; LightGBM, TLSH kNN and trivial baseline; `Docs/results.md`.
 - Clusters: `Tools/Clustering/clusterer.py` implemented; `cluster_id` populated (94 clusters, 33 multi-member, 0 mixed-family after the benign expansion; 45 before). The fresh-run union-guard bug is fixed (see `Docs/DECISIONS_PART2.md`). Threshold sweep 100/50/25 is in `Docs/results.md`. Temporal splits still pending.

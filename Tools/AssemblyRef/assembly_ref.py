@@ -27,7 +27,10 @@ def carve(path: Path) -> list[str]:
         return []
     try:
         pe = dnfile.dnPE(str(path))
-    except Exception:
+    except Exception as exc:
+        digest = sha256_file(path)
+        sys.stderr.write(f"WARNING: {KIND} parse failed for {path} "
+                         f"({digest}): {exc}\n")
         return []
     if pe.net is None or pe.net.mdtables is None:
         return []

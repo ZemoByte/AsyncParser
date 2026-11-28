@@ -17,12 +17,17 @@ if str(REPO) not in sys.path:
 from Tools.Audit import reference_only  # noqa: E402
 
 
-def make_label(root: Path, sha: str, status: str) -> Path:
-    path = root / "Labels" / f"{sha}.json"
+def make_label(root: Path, sha: str, status: str, config=None,
+               directory: str = "Labels", **extra) -> Path:
+    path = root / directory / f"{sha}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
+    fields = {"sha256": sha, "lbl_sts": status}
+    if config is not None:
+        fields["config"] = config
+    fields.update(extra)
     path.write_text(json.dumps({
         "schema_version": 1, "sha256": sha, "kind": "label",
-        "producer": "labeler", "fields": {"sha256": sha, "lbl_sts": status},
+        "producer": "labeler", "fields": fields,
     }), encoding="utf-8")
     return path
 
@@ -39,8 +44,8 @@ class AuditTests(unittest.TestCase):
             root = Path(directory)
             make_label(root, "a" * 64, "verified")
             make_label(root, "b" * 64, "benign")
-            flags = {"a" * 64: "file_name:server", "b" * 64: "file_name:server"}
-            result = reference_only.apply_flags(root, flags, {}, dry_run=False)
+            auto = {"a" * 64: "file_name:server", "b" * 64: "file_name:server"}
+            result = reference_only.apply_flags(root, auto, {}, {}, dry_run=False)
             self.assertEqual([item["sha256"] for item in result["changed"]],
                              ["a" * 64])
             self.assertEqual(result["skipped"], {"status:benign": 1})
@@ -49,13 +54,77 @@ class AuditTests(unittest.TestCase):
             self.assertEqual(fields["lbl_sts"], "reference_only")
             self.assertEqual(fields["previous_status"], "verified")
 
+    def test_valid_config_blocks_auto_flag(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            make_label(root, "a" * 64, "verified",
+                       config={"hosts": ["x.example"], "ports": [4782]})
+            auto = {"a" * 64: "file_name:stub"}
+            result = reference_only.apply_flags(root, auto, {}, {}, dry_run=False)
+            self.assertEqual(result["changed"], [])
+            self.assertEqual(result["skipped"], {"client_evidence": 1})
+            fields = json.loads(
+                (root / "Labels" / f"{'a' * 64}.json").read_text())["fields"]
+            self.assertEqual(fields["lbl_sts"], "verified")
+
+    def test_parse_error_config_does_not_block(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            make_label(root, "a" * 64, "verified",
+                       config={"parse_error": "no config found"})
+            auto = {"a" * 64: "file_name:stub"}
+            result = reference_only.apply_flags(root, auto, {}, {}, dry_run=False)
+            self.assertEqual([item["sha256"] for item in result["changed"]],
+                             ["a" * 64])
+            self.assertEqual(result["skipped"], {})
+
+    def test_manual_flag_wins_over_valid_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            make_label(root, "a" * 64, "verified",
+                       config={"hosts": ["x.example"]})
+            manual = {"a" * 64: "server_panel_in_dnspy"}
+            result = reference_only.apply_flags(root, {}, manual, {},
+                                                dry_run=False)
+            self.assertEqual(len(result["changed"]), 1)
+            fields = json.loads(
+                (root / "Labels" / f"{'a' * 64}.json").read_text())["fields"]
+            self.assertEqual(fields["scope_reason"], "server_panel_in_dnspy")
+
+    def test_auto_flag_is_restored_when_client_evidence_appears(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            make_label(root, "a" * 64, "reference_only",
+                       config={"hosts": ["x.example"]},
+                       directory="Aggregated", previous_status="verified",
+                       scope_reason="file_name:stub")
+            auto = {"a" * 64: "file_name:stub"}
+            result = reference_only.apply_flags(root, auto, {}, {}, dry_run=False)
+            self.assertEqual(result["changed"], [])
+            self.assertEqual([item["restored_status"] for item in result["restored"]],
+                             ["verified"])
+            fields = json.loads(
+                (root / "Aggregated" / f"{'a' * 64}.json").read_text())["fields"]
+            self.assertEqual(fields["lbl_sts"], "verified")
+            self.assertNotIn("scope_reason", fields)
+
+    def test_auto_flag_stays_when_still_suspicious(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            make_label(root, "a" * 64, "reference_only", directory="Labels",
+                       previous_status="verified", scope_reason="file_name:stub")
+            auto = {"a" * 64: "file_name:stub"}
+            result = reference_only.apply_flags(root, auto, {}, {}, dry_run=False)
+            self.assertEqual(result["restored"], [])
+            self.assertEqual(result["skipped"], {"already_flagged": 1})
+
     def test_rerun_is_idempotent(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             make_label(root, "a" * 64, "verified")
-            flags = {"a" * 64: "file_name:builder"}
-            reference_only.apply_flags(root, flags, {}, dry_run=False)
-            result = reference_only.apply_flags(root, flags, {}, dry_run=False)
+            auto = {"a" * 64: "file_name:builder"}
+            reference_only.apply_flags(root, auto, {}, {}, dry_run=False)
+            result = reference_only.apply_flags(root, auto, {}, {}, dry_run=False)
             self.assertEqual(result["changed"], [])
             self.assertEqual(result["skipped"], {"already_flagged": 1})
 

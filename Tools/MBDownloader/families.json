@@ -1,0 +1,335 @@
+{
+  "schema_version": 1,
+  "source": "Reference/image-151.webp (AsyncRAT fork tree)",
+  "notes": "availability measured on the MalwareBazaar full export signature/filename fields",
+  "families": [
+    {
+      "name": "VenomRAT",
+      "parent": "AsyncRAT",
+      "aliases": [
+        "VenomRAT",
+        "Venom RAT"
+      ],
+      "availability": "mb",
+      "mb_count": 184
+    },
+    {
+      "name": "LMTeamRAT",
+      "parent": "VenomRAT",
+      "aliases": [
+        "LMTeamRAT",
+        "LM Team RAT"
+      ],
+      "availability": "unavailable_mb",
+      "mb_count": 0
+    },
+    {
+      "name": "Alfa Red Fox",
+      "parent": "VenomRAT",
+      "aliases": [
+        "Alfa Red Fox",
+        "AlfaRedFox"
+      ],
+      "availability": "unavailable_mb",
+      "mb_count": 0
+    },
+    {
+      "name": "Bawless Remote",
+      "parent": "VenomRAT",
+      "aliases": [
+        "Bawless Remote",
+        "BawlessRemote"
+      ],
+      "availability": "unavailable_mb",
+      "mb_count": 0
+    },
+    {
+      "name": "Shadow X RAT",
+      "parent": "VenomRAT",
+      "aliases": [
+        "Shadow X RAT",
+        "ShadowXRAT"
+      ],
+      "availability": "unavailable_mb",
+      "mb_count": 0
+    },
+    {
+      "name": "CollapseRAT",
+      "parent": "VenomRAT",
+      "aliases": [
+        "CollapseRAT",
+        "Collapse RAT"
+      ],
+      "availability": "unavailable_mb",
+      "mb_count": 0
+    },
+    {
+      "name": "L838 RAT",
+      "parent": "VenomRAT",
+      "aliases": [
+        "L838 RAT",
+        "L838RAT"
+      ],
+      "availability": "unavailable_mb",
+      "mb_count": 0
+    },
+    {
+      "name": "DcRat",
+      "parent": "AsyncRAT",
+      "aliases": [
+        "DcRat",
+        "DCRat"
+      ],
+      "availability": "mb",
+      "mb_count": 5496
+    },
+    {
+      "name": "EchoRAT",
+      "parent": "DcRat",
+      "aliases": [
+        "EchoRAT",
+        "Echo RAT"
+      ],
+      "availability": "unavailable_mb",
+      "mb_count": 0
+    },
+    {
+      "name": "SapphireRAT",
+      "parent": "EchoRAT",
+      "aliases": [
+        "SapphireRAT"
+      ],
+      "availability": "unavailable_mb",
+      "mb_count": 0
+    },
+    {
+      "name": "GhOstRAT",
+      "parent": "DcRat",
+      "aliases": [
+        "GhOstRAT"
+      ],
+      "availability": "mb",
+      "mb_count": 29
+    },
+    {
+      "name": "BitRAT",
+      "parent": "DcRat",
+      "aliases": [
+        "BitRAT"
+      ],
+      "availability": "mb",
+      "mb_count": 913
+    },
+    {
+      "name": "CyberSpike",
+      "parent": "DcRat",
+      "aliases": [
+        "CyberSpike"
+      ],
+      "availability": "unavailable_mb",
+      "mb_count": 0
+    },
+    {
+      "name": "Dumpling RAT",
+      "parent": "DcRat",
+      "aliases": [
+        "Dumpling RAT",
+        "DumplingRAT"
+      ],
+      "availability": "unavailable_mb",
+      "mb_count": 0
+    },
+    {
+      "name": "ShaShenRAT",
+      "parent": "DcRat",
+      "aliases": [
+        "ShaShenRAT"
+      ],
+      "availability": "unavailable_mb",
+      "mb_count": 0
+    },
+    {
+      "name": "DarkRAT",
+      "parent": "ShaShenRAT",
+      "aliases": [
+        "DarkRAT",
+        "Dark RAT"
+      ],
+      "availability": "mb",
+      "mb_count": 13
+    },
+    {
+      "name": "ShiningForceRAT",
+      "parent": "DcRat",
+      "aliases": [
+        "ShiningForceRAT"
+      ],
+      "availability": "unavailable_mb",
+      "mb_count": 0
+    },
+    {
+      "name": "ArchosaurRAT",
+      "parent": "ShiningForceRAT",
+      "aliases": [
+        "ArchosaurRAT"
+      ],
+      "availability": "unavailable_mb",
+      "mb_count": 0
+    },
+    {
+      "name": "Anarchy Panel",
+      "parent": "DcRat",
+      "aliases": [
+        "Anarchy Panel",
+        "AnarchyPanel"
+      ],
+      "availability": "mb",
+      "mb_count": 1
+    },
+    {
+      "name": "CYB3R RAT",
+      "parent": "DcRat",
+      "aliases": [
+        "CYB3R RAT",
+        "CYB3RRAT"
+      ],
+      "availability": "unavailable_mb",
+      "mb_count": 0
+    },
+    {
+      "name": "SantaRAT",
+      "parent": "DcRat",
+      "aliases": [
+        "SantaRAT"
+      ],
+      "availability": "unavailable_mb",
+      "mb_count": 0
+    },
+    {
+      "name": "PegasusRAT",
+      "parent": "DcRat",
+      "aliases": [
+        "PegasusRAT"
+      ],
+      "availability": "unavailable_mb",
+      "mb_count": 0
+    },
+    {
+      "name": "BoratRAT",
+      "parent": "DcRat",
+      "aliases": [
+        "BoratRAT"
+      ],
+      "availability": "mb",
+      "mb_count": 4
+    },
+    {
+      "name": "MagnumRAT",
+      "parent": "DcRat",
+      "aliases": [
+        "MagnumRAT"
+      ],
+      "availability": "unavailable_mb",
+      "mb_count": 0
+    },
+    {
+      "name": "XieBroRAT",
+      "parent": "DcRat",
+      "aliases": [
+        "XieBroRAT"
+      ],
+      "availability": "mb",
+      "mb_count": 2
+    },
+    {
+      "name": "ElegyRAT",
+      "parent": "AsyncRAT",
+      "aliases": [
+        "ElegyRAT"
+      ],
+      "availability": "unavailable_mb",
+      "mb_count": 0
+    },
+    {
+      "name": "JasonRAT",
+      "parent": "AsyncRAT",
+      "aliases": [
+        "JasonRAT"
+      ],
+      "availability": "mb",
+      "mb_count": 1
+    },
+    {
+      "name": "NonEuclid",
+      "parent": "AsyncRAT",
+      "aliases": [
+        "NonEuclid"
+      ],
+      "availability": "unavailable_mb",
+      "mb_count": 0
+    },
+    {
+      "name": "3LoshRAT",
+      "parent": "AsyncRAT",
+      "aliases": [
+        "3LoshRAT"
+      ],
+      "availability": "unavailable_mb",
+      "mb_count": 0
+    },
+    {
+      "name": "PhoenixRAT",
+      "parent": "AsyncRAT",
+      "aliases": [
+        "PhoenixRAT"
+      ],
+      "availability": "mb",
+      "mb_count": 1
+    },
+    {
+      "name": "SynRAT",
+      "parent": "AsyncRAT",
+      "aliases": [
+        "SynRAT"
+      ],
+      "availability": "mb",
+      "mb_count": 1
+    },
+    {
+      "name": "FluxusRAT",
+      "parent": "AsyncRAT",
+      "aliases": [
+        "FluxusRAT"
+      ],
+      "availability": "unavailable_mb",
+      "mb_count": 0
+    },
+    {
+      "name": "RiMAWI",
+      "parent": "AsyncRAT",
+      "aliases": [
+        "RiMAWI"
+      ],
+      "availability": "unavailable_mb",
+      "mb_count": 0
+    },
+    {
+      "name": "HotRAT",
+      "parent": "AsyncRAT",
+      "aliases": [
+        "HotRAT"
+      ],
+      "availability": "mb",
+      "mb_count": 3
+    },
+    {
+      "name": "NecrusRAT",
+      "parent": "AsyncRAT",
+      "aliases": [
+        "NecrusRAT"
+      ],
+      "availability": "unavailable_mb",
+      "mb_count": 0
+    }
+  ]
+}

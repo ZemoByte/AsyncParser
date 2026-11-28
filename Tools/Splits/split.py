@@ -173,6 +173,9 @@ def split_stats(rows: list[dict], assignment: dict[str, str],
         largest_positive_share = (largest_positive / positives) if positives else 0.0
         degenerate = (positive_clusters.total() < 2
                       or largest_positive_share > 0.40)
+        if split == "train" and (len(positive_clusters) < 5
+                                 or largest_positive_share > 0.60):
+            degenerate = True
         stats[split] = {
             "rows": len(selected),
             "positives": positives,
@@ -191,6 +194,18 @@ def split_stats(rows: list[dict], assignment: dict[str, str],
             for item in stats.values():
                 item["degenerate"] = True
     return stats
+
+
+def cleanup_stale_splits(out_root: Path, keep: set[str]) -> list[str]:
+    """Delete split JSONs for rows that are no longer primary."""
+    removed = []
+    if not out_root.is_dir():
+        return removed
+    for path in sorted(out_root.glob("*.json")):
+        if path.stem not in keep:
+            path.unlink()
+            removed.append(path.stem)
+    return removed
 
 
 def cluster_spans(rows: list[dict], assignment: dict[str, str]) -> int:
@@ -244,6 +259,7 @@ def main() -> int:
             },
         }
         write_json(out_root / f"{sha256}.json", payload)
+    removed = cleanup_stale_splits(out_root, {row["sha256"] for row in rows})
     out_root.mkdir(parents=True, exist_ok=True)
     (out_root / ".done").write_text(
         json.dumps({"producer": "split", "count": len(rows),
@@ -251,8 +267,9 @@ def main() -> int:
         encoding="utf-8",
     )
 
-    print(f"split {len(rows)} primary rows; cluster_spans={spans} "
-          f"temporal_cluster_spans={temporal_spans} missing_date={missing_date}")
+    print(f"split {len(rows)} primary rows; stale_removed={len(removed)}; "
+          f"cluster_spans={spans} temporal_cluster_spans={temporal_spans} "
+          f"missing_date={missing_date}")
     for name, stats in (("cluster", cluster_stats), ("temporal", temporal_stats)):
         print(f"## {name} split")
         for split in ("train", "val", "test"):

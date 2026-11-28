@@ -10,6 +10,7 @@ import io
 import itertools
 import json
 import os
+import re
 import signal
 import sqlite3
 import sys
@@ -1194,14 +1195,382 @@ def backfill_signature(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def backfill_signature_from_export(conn: sqlite3.Connection, path: Path) -> dict:
+    missing = {row[0] for row in conn.execute(
+        "SELECT sha256_hash FROM downloads WHERE signature IS NULL")}
+    found: dict[str, str] = {}
+    for row in iter_export_rows(path):
+        sha256 = row.get("sha256_hash", "").lower()
+        if sha256 in missing:
+            signature = row.get("signature", "").strip()
+            if signature:
+                found[sha256] = signature
+                if len(found) == len(missing):
+                    break
+    for sha256, signature in found.items():
+        conn.execute("UPDATE downloads SET signature = ? WHERE sha256_hash = ?",
+                     (signature, sha256))
+    conn.commit()
+    return {"missing": sorted(missing - set(found)), "filled": len(found),
+            "requested": len(missing)}
+
+
+# ------------------------------------------------------------- family queue
+
+FAMILY_MANIFEST = EXPORT_DIR / "family_selection.json"
+DEFAULT_FAMILIES = SCRIPT_DIR / "families.json"
+
+
+def load_families(path: Path) -> list[dict]:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    families = payload.get("families")
+    if not isinstance(families, list) or not families:
+        raise RuntimeError(f"no families in {path}")
+    return families
+
+
+def family_maps(families: list[dict]) -> tuple[dict[str, str], dict[str, str]]:
+    signature_map: dict[str, str] = {}
+    filename_map: dict[str, str] = {}
+    for family in families:
+        if family.get("availability") != "mb":
+            continue
+        name = str(family["name"])
+        for alias in [name, *family.get("aliases", [])]:
+            key = str(alias).strip().lower()
+            signature_map[key] = name
+            compact = re.sub(r"[^a-z0-9]", "", key)
+            if len(compact) >= 5:
+                filename_map[compact] = name
+    return signature_map, filename_map
+
+
+def match_filename_family(file_name: str, filename_map: dict[str, str]) -> str | None:
+    compact = re.sub(r"[^a-z0-9]", "", file_name.lower())
+    matches = [(len(key), family) for key, family in filename_map.items()
+               if key in compact]
+    return max(matches)[1] if matches else None
+
+
+def family_candidates(path: Path, families: list[dict], ledger: set[str],
+                      selected: set[str]) -> dict:
+    signature_map, filename_map = family_maps(families)
+    stats = {"rows": 0, "exe": 0, "ledger": 0, "manifest": 0,
+             "tlsh_missing": 0, "signature": 0, "filename": 0}
+    by_family: dict[str, list[dict]] = {str(f["name"]): [] for f in families
+                                        if f.get("availability") == "mb"}
+    rejected: list[tuple[str, str, str]] = []
+    for row in iter_export_rows(path):
+        stats["rows"] += 1
+        signature = row.get("signature", "").lower()
+        family = signature_map.get(signature)
+        source = "signature"
+        if family is not None:
+            stats["signature"] += 1
+        else:
+            if signature == EXPORT_SIGNATURE:
+                continue
+            if signature not in {"", "n/a"}:
+                continue
+            family = match_filename_family(row.get("file_name", ""), filename_map)
+            if family is None:
+                continue
+            stats["filename"] += 1
+            source = "filename"
+        if row.get("file_type_guess", "").lower() != "exe":
+            continue
+        stats["exe"] += 1
+        sha256 = row.get("sha256_hash", "").lower()
+        if sha256 in ledger:
+            stats["ledger"] += 1
+            rejected.append((sha256, family, "ledger"))
+            continue
+        if sha256 in selected:
+            stats["manifest"] += 1
+            rejected.append((sha256, family, "manifest"))
+            continue
+        try:
+            digest = tlsh.Tlsh()
+            digest.fromTlshStr(row.get("tlsh", ""))
+            tlsh_value = digest.hexdigest()
+        except ValueError:
+            stats["tlsh_missing"] += 1
+            rejected.append((sha256, family, "tlsh_missing"))
+            continue
+        by_family[family].append({
+            "family": family, "sha256": sha256,
+            "first_seen": row.get("first_seen_utc", ""),
+            "tlsh": tlsh_value, "source": source,
+        })
+    for items in by_family.values():
+        items.sort(key=lambda item: (item["first_seen"], item["sha256"]))
+    return {"stats": stats, "by_family": by_family, "rejected": rejected}
+
+
+def export_tlsh_map(path: Path, wanted: set[str]) -> dict[str, dict]:
+    found: dict[str, dict] = {}
+    for row in iter_export_rows(path):
+        sha256 = row.get("sha256_hash", "").lower()
+        if sha256 in wanted and sha256 not in found:
+            found[sha256] = {"tlsh": row.get("tlsh", ""),
+                             "first_seen": row.get("first_seen_utc", "")}
+            if len(found) == len(wanted):
+                break
+    return found
+
+
+def tag_fallback(auth_key: str, families: list[dict], by_family: dict[str, list[dict]],
+                 caps: dict[str, int], ledger: set[str], selected: set[str],
+                 export_path: Path) -> dict:
+    """Recent MB tag lookup for families the export does not cover."""
+    stats = {"families": 0, "rows": 0, "exe": 0, "no_tlsh": 0, "added": 0}
+    shortfalls = {str(f["name"]): caps[str(f["name"])] - len(by_family.get(str(f["name"]), []))
+                  for f in families if f.get("availability") == "mb"
+                  and len(by_family.get(str(f["name"]), [])) < caps[str(f["name"])]}
+    if not shortfalls:
+        return stats
+    state = {"consecutive_429": 0}
+    aliases = {str(f["name"]): [str(f["name"]), *f.get("aliases", [])]
+               for f in families}
+    collected: list[dict] = []
+    seen: set[str] = set()
+    for family, missing in sorted(shortfalls.items()):
+        if missing <= 0:
+            continue
+        stats["families"] += 1
+        wanted = max(missing * 2, 10)
+        got = 0
+        alias_list = []
+        for alias in [family, *aliases[family]]:
+            if alias.lower() not in {item.lower() for item in alias_list}:
+                alias_list.append(alias)
+        for alias in alias_list[:2]:
+            if got >= wanted:
+                break
+            console("TAG", f"{family}: tag={alias}")
+            try:
+                rows = get_taginfo(auth_key, alias, state)
+            except (ApiError, StopRun) as exc:
+                console("TAG", f"{family}: {exc}")
+                break
+            for row in rows:
+                sha256 = str(row.get("sha256_hash") or "").lower()
+                if not sha256 or sha256 in ledger or sha256 in selected or sha256 in seen:
+                    continue
+                if str(row.get("file_type") or "").lower() != "exe":
+                    continue
+                seen.add(sha256)
+                collected.append({"family": family, "sha256": sha256,
+                                  "first_seen": normalize_first_seen(
+                                      row.get("first_seen")),
+                                  "file_name": normalize_field(row.get("file_name")),
+                                  "source": "tag"})
+                got += 1
+                if got >= wanted:
+                    break
+            interruptible_sleep(1.0)
+        if got == 0:
+            console("TAG", f"{family}: no recent tag rows")
+    if not collected:
+        return stats
+    stats["rows"] = len(collected)
+    wanted_shas = {item["sha256"] for item in collected}
+    tlsh_rows = export_tlsh_map(export_path, wanted_shas)
+    for item in collected:
+        meta = tlsh_rows.get(item["sha256"])
+        if meta is None:
+            stats["no_tlsh"] += 1
+            continue
+        try:
+            digest = tlsh.Tlsh()
+            digest.fromTlshStr(meta["tlsh"])
+            item["tlsh"] = digest.hexdigest()
+        except ValueError:
+            stats["no_tlsh"] += 1
+            continue
+        if not item["first_seen"]:
+            item["first_seen"] = meta["first_seen"]
+        by_family.setdefault(item["family"], []).append(item)
+        stats["exe"] += 1
+        stats["added"] += 1
+    return stats
+
+
+def select_family_batch(by_family: dict[str, list[dict]],
+                        anchors: dict[str, list[str]], caps: dict[str, int],
+                        threshold: int, limit: int) -> dict:
+    selected: list[dict] = []
+    rejected: list[tuple[str, str, str]] = []
+    per_family: dict[str, int] = {}
+    pools = {family: list(values) for family, values in anchors.items()}
+    for family in sorted(by_family):
+        cap = caps.get(family, 50)
+        count = 0
+        per_family[family] = 0
+        pool = pools.setdefault(family, [])
+        for candidate in by_family[family]:
+            if count >= cap:
+                break
+            if limit and len(selected) >= limit:
+                break
+            if any(tlsh.diff(candidate["tlsh"], anchor) <= threshold
+                   for anchor in pool):
+                rejected.append((candidate["sha256"], family, "tlsh_reject"))
+                continue
+            selected.append(candidate)
+            pool.append(candidate["tlsh"])
+            count += 1
+            per_family[family] += 1
+        if limit and len(selected) >= limit:
+            break
+    return {"selected": selected, "rejected": rejected, "per_family": per_family}
+
+
+def run_family_queue(auth_key: str, export_path: Path, families_path: Path,
+                     target: int, threshold: int, limit: int, rate: int,
+                     main_conn: sqlite3.Connection) -> dict:
+    archive = ensure_export_archive(export_path, auth_key)
+    families = load_families(families_path)
+    manifest = load_selection_manifest(FAMILY_MANIFEST)
+    manifest["source"] = "family_queue"
+    ledger = {row[0] for row in main_conn.execute(
+        "SELECT sha256_hash FROM downloads")}
+    selected_before = {entry["sha256"] for entry in manifest["entries"]}
+    anchors: dict[str, list[str]] = {}
+    for entry in manifest["entries"]:
+        if entry.get("tlsh"):
+            anchors.setdefault(entry["family"], []).append(entry["tlsh"])
+
+    scan = family_candidates(archive, families, ledger, selected_before)
+    stats = scan["stats"]
+    caps = {str(family["name"]): min(target, int(family.get("mb_count") or 0))
+            for family in families if family.get("availability") == "mb"}
+    fallback = tag_fallback(auth_key, families, scan["by_family"], caps,
+                            ledger, selected_before, archive)
+    console("TAG", f"families={fallback['families']} rows={fallback['rows']} "
+            f"with_tlsh={fallback['added']} no_tlsh={fallback['no_tlsh']}")
+    chosen = select_family_batch(scan["by_family"], anchors, caps,
+                                 threshold, limit)
+    console("FAMILY", f"rows={stats['rows']} signature={stats['signature']} "
+            f"filename={stats['filename']} exe={stats['exe']} "
+            f"ledger={stats['ledger']} manifest={stats['manifest']} "
+            f"tlsh_missing={stats['tlsh_missing']} "
+            f"tlsh_reject={len(chosen['rejected'])} "
+            f"selected={len(chosen['selected'])}")
+    for family, count in sorted(chosen["per_family"].items()):
+        console("FAMILY", f"  {family}: {count}")
+
+    for sha256, family, reason in scan["rejected"] + chosen["rejected"]:
+        record_rejection(main_conn, sha256, reason,
+                         f"family_queue_{family.lower().replace(' ', '_')}")
+    main_conn.commit()
+
+    now = utc_now()
+    entries = [{**item, "status": "selected", "selected_at": now}
+               for item in chosen["selected"]]
+    manifest["entries"].extend(entries)
+    manifest["runs"].append({
+        "selected_at": now, "target": target, "tlsh_threshold": threshold,
+        "limit": limit, "counts": {**stats,
+                                   "tlsh_reject": len(chosen["rejected"]),
+                                   "selected": len(entries)},
+        "per_family_selected": chosen["per_family"],
+    })
+    save_selection_manifest(FAMILY_MANIFEST, manifest)
+
+    ensure_dir(TEMP_DIR)
+    if COMPARISON_DB.exists():
+        COMPARISON_DB.unlink()
+    temp_conn = sqlite3.connect(COMPARISON_DB)
+    init_temp_db(temp_conn)
+    downloaded = adopted = failed = 0
+    state = {"consecutive_429": 0}
+    last_download = None
+    try:
+        for index, entry in enumerate(entries, 1):
+            if STOP["requested"]:
+                raise StopRun("Ctrl+C")
+            if attempts_in_last_24h(main_conn) >= DAILY_CAP:
+                raise StopRun(f"daily cap of {DAILY_CAP} downloads reached")
+            family = entry["family"]
+            rule = f"family_queue_{family.lower().replace(' ', '_')}"
+            sha256 = entry["sha256"]
+            item = {"file_name": entry.get("file_name", ""),
+                    "signature": family}
+            outcome = handle_existing_file(main_conn, temp_conn, sha256, "exe",
+                                           OTHER_DIR, family, "", False, rule,
+                                           entry["first_seen"], item)
+            if outcome == "adopted":
+                entry["status"] = "downloaded"
+                adopted += 1
+                save_selection_manifest(FAMILY_MANIFEST, manifest)
+                continue
+            wait_seconds = 60.0 / rate
+            if last_download is not None:
+                pause = max(0.0, wait_seconds - (time.monotonic() - last_download))
+                if pause > 0:
+                    console("WAIT", f"{pause:.1f}s")
+                interruptible_sleep(pause)
+            console("GET", f"{index}/{len(entries)} {sha256[:12]}... "
+                    f"family={family}")
+            try:
+                local_name = download_sample(auth_key, sha256, "exe",
+                                             OTHER_DIR, state)
+                upsert_download(main_conn, {
+                    "sha256_hash": sha256,
+                    "api_file_name": text_field(item.get("file_name")),
+                    "local_filename": local_name,
+                    "tag": family,
+                    "secondary_tag": "",
+                    "wildcard_extra": 0,
+                    "api_tags": "",
+                    "tag_rule": rule,
+                    "file_type": "exe",
+                    "first_seen": entry["first_seen"],
+                    "downloaded_at": utc_now(),
+                    "downloaded_epoch": time.time(),
+                    "attempted_epoch": time.time(),
+                    "signature": family,
+                    "last_seen": "",
+                    "status": "success",
+                })
+                entry["status"] = "downloaded"
+                downloaded += 1
+            except (ApiError, OSError, ValueError, sqlite3.Error,
+                    zipfile.BadZipFile, RuntimeError) as exc:
+                entry["status"] = "failed"
+                failed += 1
+                record_rejection(main_conn, sha256, "download_failed", rule,
+                                 str(exc)[:200])
+                console("ERROR", f"{sha256[:12]}... {exc}")
+                main_conn.commit()
+            last_download = time.monotonic()
+            save_selection_manifest(FAMILY_MANIFEST, manifest)
+    finally:
+        temp_conn.close()
+        cleanup_temp()
+
+    missing = check_ledger(main_conn, OTHER_DIR, "exe")
+    if missing:
+        raise RuntimeError(f"{len(missing)} family files have no ledger row")
+    console("FAMILY", f"downloaded={downloaded} adopted={adopted} "
+            f"failed={failed} selected={len(entries)}")
+    return {"stats": stats, "per_family": chosen["per_family"],
+            "downloaded": downloaded, "adopted": adopted, "failed": failed}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="MalwareBazaar downloader")
     parser.add_argument("--tag-mode", choices=("exact", "contains"),
                         default="exact")
     parser.add_argument("--migrate-signature", action="store_true")
+    parser.add_argument("--backfill-export", type=Path, default=None)
     parser.add_argument("--batch", nargs="?", const=0, type=int, default=None,
                         help="tag batch when bare; export batch number with --from-export")
     parser.add_argument("--from-export", type=Path, default=None)
+    parser.add_argument("--family-queue", type=Path, default=None)
+    parser.add_argument("--families", type=Path, default=DEFAULT_FAMILIES)
+    parser.add_argument("--family-target", type=int, default=50)
     parser.add_argument("--per-year", type=int, default=50)
     parser.add_argument("--years", default="2020-2026")
     parser.add_argument("--tlsh-threshold", type=int, default=100)
@@ -1224,12 +1593,38 @@ def main() -> None:
         console("MIGRATE", f"downloads.signature backfilled; non-null={count}")
         return
 
+    if args.backfill_export is not None:
+        conn = sqlite3.connect(DB_PATH)
+        try:
+            init_main_db(conn)
+            result = backfill_signature_from_export(conn, args.backfill_export)
+        finally:
+            conn.close()
+        console("BACKFILL", f"requested={result['requested']} "
+                f"filled={result['filled']} missing={len(result['missing'])}")
+        for sha256 in result["missing"]:
+            console("BACKFILL", f"  not found: {sha256}")
+        return
+
     auth_key = load_auth_key()
     ensure_dir(TEMP_DIR)
     for directory in (ASYNCRAT_DIR, OTHER_DIR, BENIGN_DIR):
         ensure_dir(directory)
     main_conn = sqlite3.connect(DB_PATH)
     init_main_db(main_conn)
+
+    if args.family_queue is not None:
+        STOP["in_run"] = True
+        try:
+            run_family_queue(auth_key, args.family_queue, args.families,
+                             args.family_target, args.tlsh_threshold,
+                             args.limit, args.rate, main_conn)
+        except StopRun as exc:
+            console("QUEUE", str(exc))
+        finally:
+            STOP["in_run"] = False
+            main_conn.close()
+        return
 
     if args.from_export is not None:
         if not args.batch:

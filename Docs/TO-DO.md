@@ -41,7 +41,7 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
 
 - [ ] **0.4 — Label evidence and aggregation**
   - Seven voters, aggregator, importer, tests and gold template are done.
-    External gaps: `diec`, `YARAIFY_AUTH_KEY`, MB `signature`; gold is not hand-labeled.
+    External gaps closed in Phase 1.7: `diec` 4.1.0, YARAify shared key, MB `signature` (0 NULL). Gold is still not hand-labeled.
   - [x] Add `label_evidence` table (`sha256, source, source_version, independence_group, verdict, strength, scope, raw, observed_at`)
     - 2660 rows (7 voters × 380 samples); scope 649 lineage + 2011 family.
   - [x] Voter 1: own YARA rules derived from the AsyncRAT source (strings, not Layer A metadata)
@@ -66,10 +66,10 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
   - [ ] Audit: per-voter coverage/precision/recall/F1, contradiction rate, `obf_lvl` agreement → `Docs/results.md`
     - Coverage and contradiction report started; precision/recall need the hand-labeled gold set.
   - [x] Add Elastic (`Windows_Trojan_Asyncrat_11a11ba1`), Malpedia (`win.asyncrat`), YARAify `lookup_hash` as voters
-    - Elastic 48 hits, Malpedia 71 hits; YARAify client built but no auth key in this run.
+    - Elastic 48 hits, Malpedia 71 hits; YARAify key present in Phase 1.7 (0 rule hits on the corpus).
 
 - [ ] **Checkpoint:** `dataset.db` has every sample with `sha256`, `label_status`, `cluster_id`, `is_dotnet`, `label_source`
-  - 943 rows, 418 clusters, 0 NULL. `lbl_src` 239 `auto_aggregator` + 704 `hand_benign`; `is_gold=0`. Final labels: 103 `verified`, 9 `verified_other`, 84 `unverified`, 1 `review`, 42 `rejected_non_dotnet`, 704 `benign` (139 primary + 565 external holdout).
+  - 1,293 rows, 734 clusters, 0 NULL. `lbl_src` 589 `auto_aggregator` + 704 `hand_benign`; `is_gold=0`. Final labels: 152 `verified`, 9 `verified_other`, 4 `reference_only`, 316 `unverified`, 2 `review`, 106 `rejected_non_dotnet`, 704 `benign` (139 primary + 565 external holdout).
 
 ---
 
@@ -94,13 +94,13 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
 - [x] **1.3 — Structural counts**
   - [x] Number of types, methods, TypeRefs, MemberRefs, P/Invoke entries, resources, sections, file size, section entropy
   - [x] `Tools/Structure/structure.py` writes `Data/Structure/<sha>.json` + `.done`; importer adds `structure_*` columns.
-  - [x] 901 .NET structure JSONs after the MB batch.
+  - [x] 1,187 .NET structure JSONs after export batch 1.
 
 - [x] **1.4 — TLSH hash**
   - [x] Already computed in 0.2; stored in `Data/Clusters/<sha>.json`.
 
 - [ ] **Checkpoint:** Every sample has a feature record. You can inspect a few in dnSpyEx to validate.
-  - Capability JSONs exist for .NET samples (901 per tool); structure JSONs 901; TLSH is in cluster JSONs. The Stage 1 gate still fails.
+  - Capability JSONs exist for .NET samples (1,187 per tool); structure JSONs 1,187; TLSH is in cluster JSONs. The Stage 1 gate still fails.
 
 ---
 
@@ -111,7 +111,7 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
 - [x] **2.1 — Build vocabulary (training split only!)**
   - [x] Collect unique `ImportTable`/`TypeRef`/`MemberRef`/`AssemblyRef`/`ImplMap` values from **training split only**
   - [x] Keep only those appearing in ≥3 distinct training clusters
-  - [x] Save as `Docs/vocab.json` (3,157 items in the current build)
+  - [x] Save as `Docs/vocab.json` (2,048 items in the current build)
 
 - [x] **2.2 — Create splits**
   - [x] Cluster split (70/15/15) with `GroupShuffleSplit`, fixed seed
@@ -123,7 +123,7 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
   - [x] Pivot capability values into a sparse binary matrix (samples × vocab)
   - [x] Add 11 structural counts as the only dense numeric features
   - [x] `Data/Features/{train,val,test}.npz`, `feature_names.json`, `metadata.json`
-  - [x] Current primary matrix: 241 rows / 112 positives / 78 clusters
+  - [x] Current primary matrix: 290 rows / 161 positives / 108 clusters
 
 - [ ] **Checkpoint:** You have `X_train`, `X_val`, `X_test`, `y_train`, `y_val`, `y_test` as numpy/scipy arrays.
   - Arrays exist, but the Stage 1 gate fails; test has 1 positive and is diagnostic only.
@@ -145,7 +145,7 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
 
 - [x] **3.3 — TLSH kNN baseline**
   - [x] Nearest neighbor by TLSH distance from `Data/Clusters/<sha>.json`
-  - [x] Diagnostic only; test positives sit in 2 near-duplicate clusters
+  - [x] Diagnostic only; Phase 1.6 test has 24 positives in 17 clusters
 
 - [ ] **3.4 — Abstention gate**
   - [ ] Calibrate threshold from data (TypeRef + MemberRef count distributions)
@@ -167,6 +167,34 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
 - [ ] **Still failing:** AsyncRAT 103 positives in 6 clusters, 79 in one (76.7%). The `contains AsyncRAT` pool is exhausted (68 candidates); more MB downloads will not add clusters. Stage 1 is not trainable until independent positive clusters increase.
 
 ---
+
+## Phase 1.6 — historical export, split validity, scope, repo hygiene
+
+- [x] **P0.1 — `--from-export` batch 1:** streamed 1,181,317 export rows → 10,922 signature → 7,930 exe → 233 ledger overlap → **350 selected (50/year 2020-2026)**, 350 downloaded, 0 failed; 557 TLSH rejects; manifest `Data/Exports/mb_full_selection.json`; export TLSH re-verified 15/15.
+- [x] **P0.2 — rebuild and gate:** 1,293 rows; 152 verified in 36 clusters; largest 88 (57.9%) → Stage 1 FAIL (share only); Stage 2 FAIL (XWorm 9/2/77.8%); benign primary PASS. Batch yield: 50 verified in 34 new clusters (largest new cluster 9 = 18%); .NET 286/350; 232 .NET samples unverified (only MB signature supports them).
+- [x] **P0.3 — batch 2:** **not run** (P0.2 stop rule: pooled share 57.9% > 50%). No further downloads.
+- [x] **P1 — split validity:** greedy whole-cluster row-target packing (70/15/15, largest first, ties by `cluster_id`); 290 primary rows → train 203/113 (3 clusters, 77.9%, degenerate), val 43/24 (18), test 44/24 (17); 0 cluster spans; validity flags (`test_positives`, `test_positive_clusters`, structural confound, LOCO inspect, split degenerate) force DIAGNOSTIC; per-cluster recall and nearest-train TLSH distance reported (one 7-row test cluster at distance 17 → leakage flag).
+- [x] **P2 — server/builder audit:** `Tools/Audit/reference_only.py` flags file names (metadata only, never a feature); 4 verified `stub` samples marked `reference_only` (previous status preserved), excluded from class DBs/splits; static spot-check of 20 verified EXEs found no server/builder types.
+- [x] **P3 — repo hygiene:** 4,958 tracked JSONs → **0**; generated `Data/` dirs, DBs and `.done` markers untracked (`git rm --cached`, files intact); `.gitignore` extended; `Docs/REPRODUCE.md` added.
+- [x] **P4 — docs:** Phase 1.6 section in `Docs/results.md`; this block.
+- [ ] **Open:** Stage 2 XWorm diversity; 232 unverified historical .NETs; train remains dominated by the 88-sample cluster; one TLSH leakage pair (distance 17).
+
+---
+
+## Phase 1.7 — YARAify, DIE, family queue, gate
+
+- [x] **P0.1 — YARAify shared key:** `YARAIFY_AUTH_KEY` preferred, `MB_AUTH_KEY` fallback; key present, never logged.
+- [x] **P0.1b — YARAify parser bug/fix:** `lookup_hash` returns `data` as a dict (`metadata`, `tasks`), not a list; the old parser returned `[]` for every sample. The parser now reads `static_results[].rule_name`/`malpedia_family`, `clamav_results[]`, `unpacked_yara_matches[]` and metadata signatures, for both dict and list response shapes. Curated ClamAV/metadata names only disambiguate conflicting static rules (sample `4902c56dfa` resolves to AsyncRAT/medium). 10 synthetic tests.
+- [x] **P0.1c — YARAify rerun:** all 1,505 samples at ≤1 req/s; hit counts in `Docs/results.md` Phase 1.7.
+- [x] **P0.2 — DIE:** official Detect It Easy 4.1.0 (Fedora 45 RPM + distro Qt5 + current db); voter updated for the 4.x JSON schema; `obf_lvl` 1,359 plain / 146 obfuscated / 0 unknown.
+- [x] **P0.3 — signatures:** 801/801 non-null (170 backfilled from the export; no invented values).
+- [x] **P0.4 — gold:** `Data/Gold/review/gold_review_sheet.{csv,md}` (30 rows, 0 missing after SHA-based path resolution) + `Tools/Gold/merge_gold_review.py`; human audit pending (0/30).
+- [x] **P0.5 — verified_other:** 9 XWorm (rechecked, unchanged).
+- [x] **P1 — family queue:** `--family-queue` + `families.json` + `Docs/FAMILY_TREE.md`; 181 selected/downloaded (target-capped), 23 families `unavailable_mb`; no AsyncRAT relabeling.
+- [~] **P2 — AsyncRAT batch 2:** paused by the user at 31/350; 319 entries remain `selected` in the manifest for a later resume; the 31 downloaded samples are included in the rebuild.
+- [ ] **P3 — rebuild and gate:** aggregator → clusterer → audit → carvers → structure → importer → split → importer → matrix → baseline → report; measured results in `Docs/results.md`.
+- [ ] **P4/P5 — split validity / leakage / server audit:** reported in Phase 1.7 (train degeneracy, TLSH leakage pair, reference_only re-audit).
+- [ ] **P6 — git/docs:** 0 generated JSONs tracked; only `Tools/MBDownloader/families.json` (source) is tracked as JSON.
 
 ## Phase 4: Stage 2 (Family Classification)
 
@@ -219,7 +247,7 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
   - `Tools/Voters/OwnYara/`; benign hits 0.
 - [x] **Freeze the gold-set SHA-256 list** before hand-labeling, so the audit is not tuned on the same samples
   - `Data/Gold/gold.csv`, 30 clusters, human fields blank.
-- [ ] **Set `YARAIFY_AUTH_KEY`** to enable the YARAify hash lookup voter
+- [x] **Set `YARAIFY_AUTH_KEY`** (or reuse `MB_AUTH_KEY`) — done in Phase 1.7; 0 hits, auth_key_present=true
   - The user notes it is the same value as the MalwareBazaar key; it was not used because this task forbids MB/YARAify/Malpedia API calls.
 - [ ] **Hand-label the 30 gold rows** in dnSpyEx and run the precision/recall audit
 - [x] **Sketch `dataset.db` schema** on paper before coding

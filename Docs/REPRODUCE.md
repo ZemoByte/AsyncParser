@@ -88,6 +88,17 @@ python3 Tools/MBDownloader/mb_downloader.py \
   recorded in `downloads_rejected`.
 - `check_ledger` fails the batch if a file on disk has no ledger row.
 
+### Partial batches and resume
+
+Every selection is written to the manifest **before** downloading. An
+interrupted batch leaves its undownloaded entries with `status=selected`;
+re-running the same `--batch N` resumes those entries first (up to `--limit`)
+and never silently drops them. A paused batch (for example batch 2 after 31 of
+350 downloads) can stay in the manifest indefinitely; later batches only
+exclude entries that are already present, and files already on disk are
+adopted by hash instead of re-downloaded.
+
+
 Then rerun the pipeline (steps 1-11) and compare the gate and split validity
 reported by `Tools/Report/dataset_report.py` and
 `Data/Features/baseline_results.json`.
@@ -98,3 +109,68 @@ Tracked: `Tools/**/*.py`, `tests/**`, `Docs/**/*.md` (including
 `Docs/papers/`), `requirements.txt`, `.gitignore`, `AGENTS.md`,
 `Data/BenignSources.csv`, `Data/Gold/gold.csv`, and the append-only
 `Tools/MBDownloader/samples.db`. All other `Data/` outputs are ignored.
+
+## Optional evidence voters
+
+YARAify uses the same abuse.ch key as MalwareBazaar. Put either
+`YARAIFY_AUTH_KEY` or `MB_AUTH_KEY` in `.env`; the voter prefers the former.
+It never prints the key. Run at most one request per second:
+
+```bash
+python3 Tools/Voters/YARAify/yaraify_voter.py --delay 1.0
+```
+
+Detect It Easy (optional, for `obf_lvl`): use the official 4.1.0 Fedora 45 RPM
+from `horsicq/DIE-engine` releases, the Fedora 45 `qt5-qtbase`/`qt5-qtscript`
+runtime, and the `current-database` `db.zip` from `horsicq/Detect-It-Easy`.
+`diec` works on Fedora 45 once `LD_LIBRARY_PATH` points at the extracted Qt5
+libraries and `-D` points at the extracted `db` folder:
+
+```bash
+python3 Tools/Voters/DIE/die_voter.py --diec /path/to/diec-wrapper
+```
+
+If `diec` is not available, the voter records `obf_lvl=unknown`; never fake it.
+
+In this run the verified CLI setup was: official DIE 4.1.0 Fedora 45 RPM
+extracted under `/tmp/opencode/die_extract`, Fedora 45 `qt5-qtbase` /
+`qt5-qtscript` extracted under `/tmp/opencode/qt5root`, the `current-database`
+`db.zip` extracted under `/tmp/opencode/die_db`, and a wrapper at
+`/tmp/opencode/diec` that sets `LD_LIBRARY_PATH` and passes
+`-D /tmp/opencode/die_db/db`. The wrapper path is a local convenience, not a
+repo dependency; any working `diec` with its database is accepted.
+
+YARAify uses the **same abuse.ch key as MalwareBazaar** (`YARAIFY_AUTH_KEY`
+first, `MB_AUTH_KEY` fallback). The fixed parser accepts both response shapes:
+`data` as a dict with `tasks` (current) and `data` as a list (older). Family
+names are read from `static_results[].rule_name`/`malpedia_family`,
+`clamav_results[]` and `unpacked_yara_matches[]`; descriptions are kept for the
+audit trail but do not by themselves decide a family.
+
+## Family queue (non-AsyncRAT forks)
+
+```bash
+python3 Tools/MBDownloader/mb_downloader.py \
+  --family-queue /tmp/opencode/mb_full.csv.zip \
+  --families Tools/MBDownloader/families.json \
+  --family-target 50 --tlsh-threshold 100 --rate 5
+```
+
+The manifest is `Data/Exports/family_selection.json`; unavailable families are
+listed in `Docs/FAMILY_TREE.md`.
+
+## Ledger signature backfill
+
+```bash
+python3 Tools/MBDownloader/mb_downloader.py \
+  --backfill-export /tmp/opencode/mb_full.csv.zip
+```
+
+## Gold review sheet
+
+```bash
+python3 Tools/Gold/review_sheet.py
+```
+
+It writes `Data/Gold/review_sheet.md` and never fills `gold_status` or
+`gold_family`.

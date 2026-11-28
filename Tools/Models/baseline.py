@@ -36,6 +36,7 @@ DEFAULT_DATA = ROOT / "Data"
 SEED = 42
 
 from Tools._label_common import load_final_label  # noqa: E402
+from Tools._gate import evaluate_gate  # noqa: E402
 from Tools.Features.build_matrix import (  # noqa: E402
     STRUCTURAL_FEATURES,
     load_carved,
@@ -109,6 +110,13 @@ def bootstrap_ci(y_true, y_pred, y_score, groups, iterations=200, seed=SEED) -> 
     }
 
 
+def distance_score(distance: float | None) -> float:
+    """Higher score for closer TLSH neighbours; no neighbour -> 0."""
+    if distance is None:
+        return 0.0
+    return 1.0 / (1.0 + float(distance))
+
+
 def tlsh_predict(train: dict, test: dict) -> tuple[np.ndarray, np.ndarray]:
     hashes = {}
     for path in (ROOT / "Data" / "Clusters").glob("*.json"):
@@ -134,37 +142,12 @@ def tlsh_predict(train: dict, test: dict) -> tuple[np.ndarray, np.ndarray]:
                     best_distance = distance
                     best = int(train_y)
         predictions.append(best if best is not None else majority)
-        scores.append(float(best if best is not None else majority))
+        scores.append(distance_score(best_distance))
     return np.asarray(predictions), np.asarray(scores)
 
 
 def gate_status(data_root: Path) -> bool:
-    conn = sqlite3.connect(f"file:{data_root / 'DataSet.db'}?mode=ro", uri=True)
-    try:
-        rows = list(conn.execute(
-            "SELECT sha256, lbl_sts, target_class_db, cluster_id FROM dataset"
-        ))
-    finally:
-        conn.close()
-    by_class = {}
-    for class_name in ("AsyncRAT.db", "Benign.db"):
-        selected = [row for row in rows if row[2] == class_name]
-        clusters = Counter(row[3] for row in selected)
-        largest = max(clusters.values()) if clusters else 0
-        share = 100.0 * largest / len(selected) if selected else 100.0
-        by_class[class_name] = len(clusters) >= 10 and share <= 50.0
-    # Stage 2 uses sug_fam from the aggregate labels plus the cluster from DataSet.
-    cluster_by_sha = {row[0]: row[3] for row in rows}
-    family_clusters: dict[str, set[str]] = {}
-    for path in (data_root / "Aggregated").glob("*.json"):
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        fields = payload["fields"]
-        if fields.get("lbl_sts") == "verified_other" and fields.get("sug_fam"):
-            cluster_id = cluster_by_sha.get(payload.get("sha256", ""), "")
-            if cluster_id:
-                family_clusters.setdefault(fields["sug_fam"], set()).add(cluster_id)
-    stage2 = sum(1 for clusters in family_clusters.values() if len(clusters) >= 2) >= 2
-    return all(by_class.values()) and stage2
+    return bool(evaluate_gate(data_root)["overall"])
 
 
 def run_model(name: str, model, train: dict, test: dict) -> dict:
@@ -331,6 +314,8 @@ def validity_report(train: dict, test: dict, results: list[dict],
         reasons.append(f"test_positives={test_positives} < 20")
     if len(test_clusters) < 5:
         reasons.append(f"test_positive_clusters={len(test_clusters)} < 5")
+    if split_degenerate:
+        reasons.append("cluster split is degenerate")
     if structural_confound:
         reasons.append("structural confound: structural-only F1 is within 0.02")
     if loco_inspect:

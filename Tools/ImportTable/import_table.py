@@ -29,7 +29,10 @@ def carve(path: Path) -> list[str]:
     try:
         pe = pefile.PE(str(path), fast_load=True)
         pe.parse_data_directories()
-    except Exception:
+    except Exception as exc:
+        digest = sha256_file(path)
+        sys.stderr.write(f"WARNING: {KIND} PE parse failed for {path} "
+                         f"({digest}): {exc}\n")
         return []
     values = set()
     for entry in getattr(pe, "DIRECTORY_ENTRY_IMPORT", []) or []:
@@ -51,8 +54,8 @@ def carve(path: Path) -> list[str]:
                 values.add(f"{dll}!{name}")
     try:
         pe.close()
-    except Exception:
-        pass
+    except Exception as exc:
+        sys.stderr.write(f"WARNING: {KIND} close failed for {path}: {exc}\n")
     return sorted(values)
 
 

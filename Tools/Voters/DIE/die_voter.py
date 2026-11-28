@@ -44,25 +44,21 @@ def diec_version(diec: str) -> str:
     return text.splitlines()[0] if text else "unknown"
 
 
-def run_diec(diec: str, path: Path, timeout: int) -> tuple[str, dict]:
+def parse_diec_output(text: str) -> tuple[str, dict]:
+    """Parse DIE 4.x JSON (`detects[].values[]`) and the older records list."""
     try:
-        proc = subprocess.run(
-            [diec, "-j", "-d", "-e", str(path)],
-            capture_output=True, text=True, timeout=timeout, check=False,
-        )
-    except subprocess.TimeoutExpired:
-        return "unknown", {"reason": "diec_timeout"}
-    except OSError as exc:
-        return "unknown", {"reason": f"diec_error: {exc}"}
-    if proc.returncode != 0:
-        return "unknown", {"reason": f"diec_returncode:{proc.returncode}",
-                           "stderr": (proc.stderr or "")[:500]}
-    try:
-        payload = json.loads(proc.stdout)
+        payload = json.loads(text)
     except json.JSONDecodeError as exc:
         return "unknown", {"reason": f"diec_json_error: {exc}"}
-    records = payload.get("records") if isinstance(payload, dict) else None
+    if not isinstance(payload, dict):
+        return "unknown", {"reason": "diec_no_records"}
+    records = payload.get("records")
     if not isinstance(records, list):
+        records = []
+        for detect in payload.get("detects") or []:
+            if isinstance(detect, dict) and isinstance(detect.get("values"), list):
+                records.extend(detect["values"])
+    if not records:
         return "unknown", {"reason": "diec_no_records"}
     relevant = []
     for record in records:
@@ -81,6 +77,22 @@ def run_diec(diec: str, path: Path, timeout: int) -> tuple[str, dict]:
         names = [str(item.get("name") or "unknown") for item in relevant]
         return f"obfuscated:{names[0]}", raw
     return "plain", raw
+
+
+def run_diec(diec: str, path: Path, timeout: int) -> tuple[str, dict]:
+    try:
+        proc = subprocess.run(
+            [diec, "-j", "-d", str(path)],
+            capture_output=True, text=True, timeout=timeout, check=False,
+        )
+    except subprocess.TimeoutExpired:
+        return "unknown", {"reason": "diec_timeout"}
+    except OSError as exc:
+        return "unknown", {"reason": f"diec_error: {exc}"}
+    if proc.returncode != 0:
+        return "unknown", {"reason": f"diec_returncode:{proc.returncode}",
+                           "stderr": (proc.stderr or "")[:500]}
+    return parse_diec_output(proc.stdout)
 
 
 def main() -> int:
