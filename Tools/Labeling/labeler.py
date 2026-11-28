@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+from collections import Counter
 import hashlib
 import json
 import os
@@ -72,6 +73,10 @@ DEFAULT_OUT = ROOT / "Data"
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 from Tools._label_common import canonical_family  # noqa: E402
+from Tools._versions import LABEL_SCHEMA_VERSION  # noqa: E402
+from Tools.Pipeline.reuse import (  # noqa: E402
+    can_reuse, output_version, schema_shift_message,
+)
 from Tools._pe import is_dotnet  # noqa: E402
 
 EVIDENCE_RAW_LIMIT = 1000
@@ -129,7 +134,7 @@ def obfuscation_level(is_net: bool, report: dict | None, path: Path) -> str:
 def _parser_chunk(paths: list[Path]) -> list[dict]:
     proc = subprocess.run(
         ["rat-king-parser", "-n"] + [str(path) for path in paths],
-        capture_output=True, text=True, check=False,
+        capture_output=True, text=True, check=False, timeout=120,
     )
     if proc.returncode != 0:
         raise RuntimeError(proc.stderr.strip() or "rat-king-parser failed")
@@ -148,12 +153,13 @@ def run_parser(paths: list[Path]) -> dict[str, dict]:
         chunk = paths[start:start + 100]
         try:
             parsed = _parser_chunk(chunk)
-        except (RuntimeError, json.JSONDecodeError):
+        except (RuntimeError, json.JSONDecodeError,
+                subprocess.TimeoutExpired, OSError):
             parsed = []
             for path in chunk:
                 try:
                     parsed.extend(_parser_chunk([path]))
-                except RuntimeError as exc:
+                except (RuntimeError, subprocess.TimeoutExpired, OSError) as exc:
                     sys.stderr.write(f"WARNING: rat-king-parser failed for "
                                      f"{path}: {exc}\n")
                 except json.JSONDecodeError:
@@ -303,8 +309,10 @@ def benign_only(args) -> int:
                 fields = payload.setdefault("fields", {})
                 if (fields.get("source") != source
                         or fields.get("origin") != origin
-                        or fields.get("kind") != sample_kind):
+                        or fields.get("kind") != sample_kind
+                        or fields.get("producer_version") != LABEL_SCHEMA_VERSION):
                     fields.update(provenance)
+                    fields["producer_version"] = LABEL_SCHEMA_VERSION
                     write_json(label_path, payload)
                     written += 1
             else:
@@ -324,6 +332,7 @@ def benign_only(args) -> int:
                         "source": source,
                         "origin": origin,
                         "kind": sample_kind,
+                        "producer_version": LABEL_SCHEMA_VERSION,
                     },
                 }
                 write_json(label_path, payload)
@@ -360,6 +369,10 @@ def main() -> int:
     parser.add_argument("--benign-root", type=Path, default=DEFAULT_SAMPLES / "Benign")
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--limit", type=int, default=None)
+    parser.add_argument("--reuse", action="store_true",
+                        help="skip samples whose label is current")
+    parser.add_argument("--refresh", action="store_true",
+                        help="ignore cached labels")
     parser.add_argument("--benign-only", action="store_true",
                         help="label Samples/Benign only; no ledger, no parser")
     args = parser.parse_args()
@@ -402,6 +415,43 @@ def main() -> int:
                 continue
             benign_targets.append((hashlib.sha256(path.read_bytes()).hexdigest(), path))
 
+    all_targets = ledger_targets + benign_targets
+    versions = Counter()
+    for sha256, _path in all_targets:
+        label_path = labels_dir / f"{sha256}.json"
+        if label_path.is_file():
+            try:
+                versions[output_version(json.loads(
+                    label_path.read_text(encoding="utf-8")))] += 1
+            except (OSError, json.JSONDecodeError):
+                versions["unreadable"] += 1
+    shift = schema_shift_message(versions, LABEL_SCHEMA_VERSION, "labeler",
+                                 len(all_targets))
+    if shift:
+        print(shift)
+
+    def current(sha256: str) -> bool:
+        label_path = labels_dir / f"{sha256}.json"
+        evidence = evidence_dir / sha256 / "rat_king_parser.json"
+        if not label_path.is_file() or not evidence.is_file():
+            return False
+        try:
+            payload = json.loads(label_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return False
+        ok, _reason = can_reuse(payload, sha256, LABEL_SCHEMA_VERSION)
+        return ok
+
+    if args.reuse and not args.refresh:
+        pending = [(sha, path) for sha, path in all_targets if not current(sha)]
+        reused = len(all_targets) - len(pending)
+        print(f"labeler reuse: {reused} cached, {len(pending)} to process")
+    else:
+        pending = all_targets
+    ledger_keys = {(sha, path) for sha, path in ledger_targets}
+    benign_keys = {path for _sha, path in benign_targets}
+    ledger_targets = [item for item in pending if item in ledger_keys]
+    benign_targets = [item for item in pending if item[1] in benign_keys]
     reports = run_parser([path for _, path in ledger_targets])
     detected_parser_version = parser_version()
 
@@ -437,6 +487,7 @@ def main() -> int:
                 "obf_lvl": obfuscation_level(is_net, report, path),
                 "parser_version": detected_parser_version if report is not None else "",
                 "config": config,
+                "producer_version": LABEL_SCHEMA_VERSION,
             },
         }
         if is_benign:

@@ -641,13 +641,8 @@ def main() -> int:
     finally:
         conn_dataset.close()
 
-    for class_dir in (DATA_DIR / "AsyncRAT", DATA_DIR / "OtherMalwares", DATA_DIR / "Benign"):
-        if not class_dir.is_dir():
-            continue
-        for tool in TOOLS:
-            marker = class_dir / tool / ".done"
-            if marker.is_file():
-                marker.unlink()
+    # Markers are consumed idempotently: keep them so a second import (after
+    # the split step) does not require running the carvers again.
     print("import complete")
     return 0
 

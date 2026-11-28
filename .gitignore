@@ -44,10 +44,12 @@ Data/Splits/
 Data/Structure/
 Data/Exports/
 Data/Audit/
-Data/*.db
 Data/**/.done
 Data/**/.*.done
 Docs/vocab.json
 
 Data/Gold/review_sheet.md
 Data/Gold/review/
+Data/Pipeline/
+Data/Pipeline/logs/
+Data/Reports/

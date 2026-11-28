@@ -45,6 +45,32 @@ class ParserFallbackTests(unittest.TestCase):
             reports = labeler.run_parser(paths)
         self.assertIn("a" * 64, reports)
 
+    def test_timeout_and_oserror_are_per_file(self):
+        import subprocess
+        paths = [Path("a.exe"), Path("b.exe"), Path("c.exe")]
+        report = {"sha256": "a" * 64}
+
+        def fake(cmd, *args, **kwargs):
+            if len(cmd) > 3:  # chunk call
+                raise subprocess.TimeoutExpired("rat-king-parser", 120)
+            if cmd[-1].endswith("b.exe"):
+                raise OSError("missing parser")
+            return result(json.dumps([report]))
+
+        with mock.patch.object(labeler.subprocess, "run", side_effect=fake):
+            reports = labeler.run_parser(paths)
+        self.assertIn("a" * 64, reports)
+        self.assertEqual(len(reports), 1)
+
+    def test_chunk_oserror_falls_back(self):
+        paths = [Path("a.exe")]
+        report = {"sha256": "a" * 64}
+        with mock.patch.object(labeler.subprocess, "run",
+                               side_effect=[OSError("no exec"),
+                                            result(json.dumps([report]))]):
+            reports = labeler.run_parser(paths)
+        self.assertIn("a" * 64, reports)
+
     def test_good_chunk_is_used_directly(self):
         paths = [Path("a.exe")]
         report = {"sha256": "a" * 64}

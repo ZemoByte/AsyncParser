@@ -27,7 +27,8 @@ def write_json(path: Path, payload: dict) -> None:
 
 def write_evidence(out_root: Path, sha256: str, source: str, source_version: str,
                    independence_group: str, verdict: str, strength: str,
-                   raw: dict) -> None:
+                   raw: dict, producer_version: int | None = None) -> None:
+    from Tools._versions import EVIDENCE_SCHEMA_VERSION
     payload = {
         "schema_version": 1,
         "sha256": sha256,
@@ -41,9 +42,27 @@ def write_evidence(out_root: Path, sha256: str, source: str, source_version: str
             "strength": strength,
             "raw": raw,
             "observed_at": utc_now(),
+            "producer_version": (EVIDENCE_SCHEMA_VERSION
+                                  if producer_version is None
+                                  else producer_version),
         },
     }
     write_json(out_root / "Evidence" / sha256 / f"{source}.json", payload)
+
+
+def evidence_current(out_root: Path, sha256: str, source: str,
+                     source_version: str | None = None) -> bool:
+    from Tools._versions import EVIDENCE_SCHEMA_VERSION
+    path = out_root / "Evidence" / sha256 / f"{source}.json"
+    try:
+        fields = json.loads(path.read_text(encoding="utf-8")).get("fields", {})
+    except (OSError, json.JSONDecodeError):
+        return False
+    if fields.get("producer_version") != EVIDENCE_SCHEMA_VERSION:
+        return False
+    if source_version is not None and fields.get("source_version") != source_version:
+        return False
+    return True
 
 
 def rules_digest(paths) -> str:

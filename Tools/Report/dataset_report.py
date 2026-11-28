@@ -269,6 +269,7 @@ def main() -> int:
 
     report = "\n".join(lines)
     if args.out:
+        args.out.parent.mkdir(parents=True, exist_ok=True)
         args.out.write_text(report, encoding="utf-8")
     else:
         print(report)

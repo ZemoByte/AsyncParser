@@ -1,5 +1,166 @@
 # results.md — run reports
 
+## Phase 3.0 — frozen ceiling and orchestrator hardening (2026-11-28)
+
+**DIAGNOSTIC ONLY — no real-world claim.** The dataset is frozen at 1,824
+rows; no batch 3, no family queue, no uploads.
+
+- Stage 1 `AsyncRAT` 154 rows / 52 clusters / largest **89 = 57.8% FAIL**
+  (24 verified short of the 178 needed at that cluster size). Benign active
+  129 / 70 / 14.7% PASS.
+- Stage 2: AsyncRAT FAIL, QuasarRAT 3/2/66.7% FAIL, DcRat 1/1 FAIL;
+  XWorm 49/23/49.0% PASS and VenomRAT 5/4/40% PASS; overall FAIL.
+- Lineage-only verified: **11** (kept). With them 57.8%, without 62.2% —
+  failure does not depend on them.
+- Class DBs 154 / 58 / 704; evidence 12,768; 0 NULL clusters.
+- DIE at 1,824 rows: **1,603 plain / 221 obfuscated / 0 unknown**.
+- Batches: batch 1 + 2 = 700 historical samples; batch-2 verified yield
+  **24/350 = 6.9%**, below the 13% stop line.
+- Split 341 rows: train 238/148/23 clusters at 60.1% (degenerate); val 51
+  (32 positives, 30 clusters, 6.2%); test 52 (32, 29, 12.5%); 0 spans;
+  reference_only NULL.
+- Cross-family pairs: XWorm↔AsyncRAT 88; DcRat↔AsyncRAT 64 — human/gold
+  items, no merge.
+- Holdout FPR 13/565 = 2.3%; LOCO not triggered; all model numbers
+  diagnostic (capability F1 0.921 at this state; 0.963 was the 1,505 state).
+
+### Orchestrator state/lock fix
+
+Each stage now takes a PID lock under `Data/Pipeline/locks/`, records
+`started_at`, `finished_at`, wall seconds, return code, output count and
+marker mtime, and fails (status `failed:stale_output`, never `ok`) if its
+marker is not newer than the stage start. A second YARAify/DIE process is
+refused while the lock PID is alive.
+
+Cold stage work remains **~43 min** (labeler 256 s, carvers ~210 s each,
+structure 192 s, YARAify **1,217 s** in the cold log). The state entry
+`yaraify=2.3 s` comes from a later all-reused verification invocation, not
+from the cold lookup run; the new lock/freshness fields make this auditable.
+Warm pass after the fix: **15.2 s**, 20 stages skipped (`cached`), only the two
+idempotent importers ran (7.8 s + 7.2 s), YARAify skipped. State 22/22 `ok`.
+
+Gold: 30 rows, 0 missing, 0 filled (human pending). Details in
+`Docs/limitations.md`.
+
+## Phase 1.9 — batch 2, cold/warm orchestrator (2026-11-28)
+
+**DIAGNOSTIC ONLY — dataset gate failed; not a result.**
+
+Batch 2 finished (350/350 historical AsyncRAT samples) and the first
+fingerprint-aware orchestrator pass ran. Stage 1 improves but still fails on
+the largest-share rule; the batch-2 verified yield is **6.9%**, below the
+agreed 13% stop threshold, so no further history was downloaded.
+
+### Dataset
+
+- **1,824 rows**, 0 NULL `cluster_id`, **1,228 clusters**.
+- Evidence **12,768 = 7 × 1,824**.
+- Labels: 154 `verified`, 58 `verified_other`, 704 `benign`, 624
+  `unverified`, 278 `rejected_non_dotnet`, 4 `review`, 2 `reference_only`.
+- Class DBs: AsyncRAT **154**, OtherMalwares **58**, Benign 704.
+- DIE: 1,603 plain / 221 obfuscated / 0 unknown (28 protector families).
+- Batch 2: 24 new verified (6.9%), 66 new non-.NET; 350/350 downloaded.
+
+### Stage 1 (FAIL)
+
+| state | rows | clusters | largest | share | result |
+|---|---:|---:|---:|---:|---|
+| before batch 2 | 1,505 | 32 | 86 | 57.8% | FAIL |
+| after batch 2 | 1,824 | **52** | **89** | **57.8%** | **FAIL** |
+
+Active benign: **70 clusters / 14.7% — PASS**.
+
+Lineage-only sensitivity (11 rows: the previous 9 plus `26e8b9f0`, `b5ddcd46`):
+
+| variant | rows | clusters | largest | share | result |
+|---|---:|---:|---:|---:|---|
+| with lineage-only | 154 | 52 | 89 | 57.8% | FAIL |
+| without lineage-only | 143 | 41 | 89 | 62.2% | FAIL |
+
+The gate fails **with or without** the 11 lineage-only rows; they are not the
+reason for the failure and were not downgraded.
+
+### Stage 2 (FAIL)
+
+| family | rows | clusters | largest share | result |
+|---|---:|---:|---:|---|
+| AsyncRAT | 154 | 52 | 57.8% | FAIL |
+| XWorm | 49 | 23 | 49.0% | **PASS** |
+| VenomRAT | 5 | 4 | 40.0% | PASS |
+| QuasarRAT | 3 | 2 | 66.7% | FAIL |
+| DcRat | 1 | 1 | 100.0% | FAIL |
+
+XWorm now has enough independent clusters; the remaining failures are
+AsyncRAT's 89-row cluster and singleton QuasarRAT/DcRat.
+
+### Split (341 primary: 180 positives, 161 negatives)
+
+| split | rows | pos | neg | pos clusters | neg clusters | largest pos share | degenerate |
+|---|---:|---:|---:|---:|---:|---:|---|
+| train | 238 | 148 | 90 | 23 | 32 | 60.1% | **yes** |
+| val | 51 | 32 | 19 | 30 | 19 | 6.2% | no |
+| test | 52 | 32 | 20 | 29 | 19 | 12.5% | no |
+
+- 0 cluster spans; 0 stale split files; split files = `.done` = 341.
+- The rebalance post-pass made **no move**: after batch 2 the test split is
+  already healthy (12.5%), and the 14-row cluster from Phase 1.7 no longer
+  dominates. Train remains degenerate at 60.1%.
+- `reference_only`/`unverified`/gold rows have NULL splits.
+
+### Baselines (test 52 rows, 32 positives, 29 clusters)
+
+| model | F1 | PR-AUC |
+|---|---:|---:|
+| majority | 0.762 | 0.615 |
+| logistic, structural | 0.000 | 0.827 |
+| TLSH kNN | 0.750 | 0.666 |
+| LightGBM, full | 0.900 | 0.992 |
+| LightGBM, capability only | **0.921** | 0.988 |
+| LightGBM, structural only | 0.831 | 0.929 |
+
+- `not_a_result=true` because train is degenerate; structural confound false.
+- LOCO not triggered (23 train positive clusters). Holdout FPR **13/565 = 2.3%**.
+
+### Cross-family audit (human/gold item, no merge)
+
+Two test→train pairs within TLSH 100:
+
+- XWorm `00fe40a8` ↔ AsyncRAT `053fa0de`, distance **88**.
+- DcRat `054498f9` ↔ AsyncRAT `053fa0de`, distance **64**.
+
+Both sides carry strong family-scoped voters and valid configs; the family
+guard is intentional. Leave as-is, no automatic merge or relabel.
+
+### Orchestrator cold vs warm
+
+- **Cold:** 22 stages, each once; carvers once; YARAify 1 req/s (one process);
+  DIE 4 workers. Stage work ≈ **43 min** (labeler 256 s, carvers ~210 s each,
+  structure 192 s, YARAify 1,217 s, serial stages ~60 s).
+- **Warm:** **14.7 s** wall; 20 stages skipped (`cached`), only the two
+  idempotent importers ran (7.2 s + 7.4 s). YARAify skipped; no carver rerun.
+- `Data/Pipeline/state.json`: **22/22 stages status=ok**.
+
+### Integrity and git
+
+- No sample executed or uploaded; YARAify rate unchanged.
+- DBs contain no real credentials (the shared auth key is absent; only .NET
+  `Authorization`/`password` reference names appear).
+- Dataset DBs are tracked now (`DataSet.db` 32.8 MiB, `Benign.db` 13.9 MiB,
+  `AsyncRAT.db` 3.4 MiB, `OtherMalwares.db` 1.2 MiB); generated JSONs,
+  markers, logs and `Samples/` remain untracked.
+- Gold review: 30 rows, **0 missing, 0 filled** (human pending).
+- No commits by the agent.
+
+### Limitations
+
+- Stage 1 ceiling: 57.8% largest share; passing would require ≥178 verified at
+  the 89-row cluster (or more independent clusters). Batch-2 yield was 6.9%,
+  so more history is not justified.
+- Stage 2 fails on AsyncRAT, QuasarRAT and DcRat.
+- Train split remains degenerate (60.1%), so every model number is diagnostic.
+- Two cross-family near-duplicate pairs remain as gold-review items.
+
+
 ## Phase 1.7 — YARAify, DIE, family queue, fork-label fix (2026-11-28)
 
 **DIAGNOSTIC ONLY — dataset gate failed; not a result.**

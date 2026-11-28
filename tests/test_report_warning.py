@@ -45,11 +45,13 @@ class ClusterCountWarningTests(unittest.TestCase):
             samples.mkdir()
             proc = subprocess.run(
                 [sys.executable, "Tools/Report/dataset_report.py",
-                 "--data-root", str(root), "--samples-root", str(samples)],
+                 "--data-root", str(root), "--samples-root", str(samples),
+                 "--out", str(Path(directory) / "Reports" / "report.md")],
                 cwd=REPO, capture_output=True, text=True, check=False)
             self.assertEqual(proc.returncode, 0, proc.stderr)
             self.assertIn("WARNING: cluster JSON count 2 != dataset rows 1",
                           proc.stderr)
+            self.assertTrue((Path(directory) / "Reports" / "report.md").is_file())
 
 
 if __name__ == "__main__":

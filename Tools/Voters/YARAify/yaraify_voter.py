@@ -25,10 +25,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from Tools._carver_common import iter_samples, sha256_file  # noqa: E402
+from Tools._label_common import load_final_label  # noqa: E402
 from Tools._voter_common import (  # noqa: E402
-    summarize_hits,
-    write_evidence,
-    write_marker,
+    evidence_current, summarize_hits, write_evidence, write_marker,
 )
 
 DEFAULT_SAMPLES = ROOT / "Samples"
@@ -247,6 +246,10 @@ def main() -> int:
     parser.add_argument("--auth-key", default=os.environ.get("YARAIFY_AUTH_KEY", ""))
     parser.add_argument("--timeout", type=int, default=30)
     parser.add_argument("--delay", type=float, default=0.25)
+    parser.add_argument("--reuse", action="store_true")
+    parser.add_argument("--skip-trivial", action=argparse.BooleanOptionalAction,
+                        default=True,
+                        help="skip benign/non-.NET without an API call")
     parser.add_argument("--limit", type=int, default=0,
                         help="0 = all samples")
     args = parser.parse_args()
@@ -257,19 +260,47 @@ def main() -> int:
     source_version = "yaraify@api_v1"
 
     hits = []
+    skipped = {"benign": 0, "non_dotnet": 0}
     total = 0
+    reused = 0
     for _class_name, path in iter_samples(samples_root):
         if args.limit and total >= args.limit:
             break
         sha256 = sha256_file(path)
-        if not auth_key:
-            verdict, strength = "no_match", "weak"
-            raw = {"scope": "family", "origin": "yaraify",
-                   "reason": "auth_key_missing"}
-        else:
-            verdict, detail = lookup(sha256, auth_key, args.timeout)
-            strength = detail.pop("strength", "weak")
-            raw = detail["raw"]
+        if args.reuse and evidence_current(out_root, sha256, SOURCE,
+                                           source_version):
+            reused += 1
+            total += 1
+            continue
+        status = ""
+        try:
+            status = str(load_final_label(sha256, out_root).get("lbl_sts") or "")
+        except RuntimeError:
+            status = ""
+        if args.skip_trivial and status in {"benign", "rejected_non_dotnet"}:
+            reason = ("skipped_benign" if status == "benign"
+                      else "skipped_non_dotnet")
+            existing = None
+            evidence_path = out_root / "Evidence" / sha256 / f"{SOURCE}.json"
+            if evidence_path.is_file():
+                try:
+                    existing = json.loads(evidence_path.read_text(encoding="utf-8"))
+                except (OSError, json.JSONDecodeError):
+                    existing = None
+            fields = (existing or {}).get("fields") or {}
+            if fields.get("verdict") not in (None, "no_match"):
+                total += 1
+                continue
+            write_evidence(out_root, sha256, SOURCE, source_version, GROUP,
+                           "no_match", "weak",
+                           {"scope": "family", "origin": "yaraify",
+                            "reason": reason, "query_status": "skipped"})
+            skipped["benign" if status == "benign" else "non_dotnet"] += 1
+            total += 1
+            continue
+        verdict, detail = lookup(sha256, auth_key, args.timeout)
+        strength = detail.pop("strength", "weak")
+        raw = detail["raw"]
         write_evidence(out_root, sha256, SOURCE, source_version, GROUP,
                        verdict, strength, raw)
         total += 1
@@ -282,6 +313,7 @@ def main() -> int:
     by_status, by_cluster = summarize_hits(hits, out_root / "Labels",
                                            out_root / "Clusters")
     print(f"yaraify: {len(hits)}/{total} hits, auth_key_present={bool(auth_key)}")
+    print(f"yaraify: reused={reused} skipped={skipped}")
     print(f"hits by lbl_sts: {dict(sorted(by_status.items()))}")
     print(f"hits by cluster_id: {dict(sorted(by_cluster.items()))}")
     return 0

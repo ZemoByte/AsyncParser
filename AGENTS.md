@@ -66,10 +66,16 @@ Stress-test plans and designs through systematic questioning:
 - Designed for design reviews, architecture validation, and pre-implementation planning.
 - Ask the questions in small batches (at most 3 at a time), each with your recommended default, so the user can answer "yes" to move on. See `Docs/User.md`.
 
-### 7. No Commits Until Told
-No commit to Engram memory or git (remote/local) until explicitly told. The user commits. Engram commit only on explicit authorization.
-
-No git commit/push by the assistant; the user commits.
+### 7. Git and memory
+- Git is opt-in. Do not run git commands unless the user explicitly asks.
+- If the user explicitly asks repeatedly, treat the latest explicit request
+  as authorization for the requested non-destructive git commands
+  (status/diff/add/rm --cached).
+- Do not commit or push unless the user explicitly asks for that action.
+  The user owns the repo.
+- Never run destructive commands (reset --hard, clean -fd, checkout --,
+  push --force) without a separate explicit confirmation naming the command.
+- Engram memory commits still require explicit authorization.
 
 ## Project rules
 

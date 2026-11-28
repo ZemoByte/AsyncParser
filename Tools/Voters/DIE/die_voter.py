@@ -13,6 +13,7 @@ import json
 import shutil
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import Counter
 from pathlib import Path
 
@@ -22,7 +23,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from Tools._carver_common import iter_samples, sha256_file  # noqa: E402
-from Tools._voter_common import write_evidence, write_marker  # noqa: E402
+from Tools._versions import EVIDENCE_SCHEMA_VERSION  # noqa: E402
+from Tools._voter_common import (  # noqa: E402
+    evidence_current, write_evidence, write_marker)  # noqa: E402
 
 DEFAULT_SAMPLES = ROOT / "Samples"
 DEFAULT_OUT = ROOT / "Data"
@@ -101,6 +104,8 @@ def main() -> int:
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--diec", default=shutil.which("diec") or "diec")
     parser.add_argument("--timeout", type=int, default=60)
+    parser.add_argument("--workers", type=int, default=4)
+    parser.add_argument("--reuse", action="store_true")
     args = parser.parse_args()
 
     samples_root = args.samples_root.resolve()
@@ -112,24 +117,39 @@ def main() -> int:
 
     counts: Counter = Counter()
     total = 0
+    reused = 0
+    workers = max(1, min(args.workers, 4))
+    pending = []
     for _class_name, path in iter_samples(samples_root):
         sha256 = sha256_file(path)
-        if installed:
-            obf_lvl, detail = run_diec(diec, path, args.timeout)
+        if args.reuse and evidence_current(out_root, sha256, SOURCE,
+                                           source_version):
+            reused += 1
+            total += 1
+            continue
+        pending.append((sha256, path))
+
+    def work(item):
+        sha256, path = item
+        level, detail = run_diec(diec, path, args.timeout)
+        return sha256, level, detail
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(work, item) for item in pending]
+        for future in as_completed(futures):
+            sha256, obf_lvl, detail = future.result()
             strength = "strong" if obf_lvl.startswith("obfuscated:") else "medium"
             raw = {"scope": "attribute", "obf_lvl": obf_lvl, "detail": detail}
-        else:
-            obf_lvl = "unknown"
-            strength = "weak"
-            raw = {"scope": "attribute", "obf_lvl": obf_lvl,
-                   "reason": "diec_not_installed"}
-        write_evidence(out_root, sha256, SOURCE, source_version, GROUP,
-                       "no_match", strength, raw)
-        counts[obf_lvl] += 1
-        total += 1
+            write_evidence(out_root, sha256, SOURCE, source_version, GROUP,
+                           "no_match", strength, raw)
+            counts[obf_lvl] += 1
+            total += 1
 
+    if reused:
+        counts["reused"] += reused
     write_marker(out_root / "Evidence", SOURCE, source_version, total)
-    print(f"detect_it_easy: {total} samples, obf_lvl {dict(sorted(counts.items()))}")
+    print(f"detect_it_easy: {total} samples (reused {reused}), "
+          f"workers {workers}, obf_lvl {dict(sorted(counts.items()))}")
     print(f"diec_installed: {installed}, version: {version}")
     return 0
 

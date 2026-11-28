@@ -23,6 +23,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from Tools._carver_common import iter_samples, sha256_file, write_json  # noqa: E402
+from Tools._versions import EVIDENCE_SCHEMA_VERSION  # noqa: E402
+from Tools._voter_common import evidence_current  # noqa: E402
 
 DEFAULT_SAMPLES = ROOT / "Samples"
 DEFAULT_OUT = ROOT / "Data"
@@ -80,6 +82,7 @@ def main() -> int:
     parser.add_argument("--samples-root", type=Path, default=DEFAULT_SAMPLES)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--rules", type=Path, default=DEFAULT_RULES)
+    parser.add_argument("--reuse", action="store_true")
     args = parser.parse_args()
 
     samples_root = args.samples_root.resolve()
@@ -99,6 +102,10 @@ def main() -> int:
     total = 0
     for class_name, path in iter_samples(samples_root):
         sha256 = sha256_file(path)
+        if args.reuse and evidence_current(out_root, sha256, SOURCE,
+                                           source_version):
+            total += 1
+            continue
         matches = rules.match(str(path))
         verdict = "AsyncRAT" if matches else "no_match"
         raw = match_raw(matches)
@@ -120,6 +127,7 @@ def main() -> int:
                 "strength": "strong" if matches else "weak",
                 "raw": raw,
                 "observed_at": utc_now(),
+                "producer_version": EVIDENCE_SCHEMA_VERSION,
             },
         }
         write_json(evidence_dir / sha256 / "own_yara.json", payload)

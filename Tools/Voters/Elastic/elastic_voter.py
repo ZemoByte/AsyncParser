@@ -19,7 +19,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from Tools._carver_common import iter_samples, sha256_file  # noqa: E402
-from Tools._voter_common import (  # noqa: E402
+from Tools._voter_common import (
+    evidence_current,  # noqa: E402
     match_summary,
     rules_digest,
     summarize_hits,
@@ -60,6 +61,7 @@ def main() -> int:
     parser.add_argument("--samples-root", type=Path, default=DEFAULT_SAMPLES)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--rules-dir", type=Path, default=DEFAULT_RULES)
+    parser.add_argument("--reuse", action="store_true")
     args = parser.parse_args()
 
     samples_root = args.samples_root.resolve()
@@ -75,6 +77,10 @@ def main() -> int:
     total = 0
     for _class_name, path in iter_samples(samples_root):
         sha256 = sha256_file(path)
+        if args.reuse and evidence_current(out_root, sha256, SOURCE,
+                                           source_version):
+            total += 1
+            continue
         matches = rules.match(str(path))
         families = families_for_rules(str(getattr(m, "rule", "")) for m in matches)
         if len(families) == 1:

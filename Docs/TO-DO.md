@@ -191,10 +191,16 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
 - [x] **P0.4 — gold:** `Data/Gold/review/gold_review_sheet.{csv,md}` (30 rows, 0 missing after SHA-based path resolution) + `Tools/Gold/merge_gold_review.py`; human audit pending (0/30).
 - [x] **P0.5 — verified_other:** 9 XWorm at the start of the phase; after the fork-label fix it is 40 (XWorm 32, VenomRAT 5, QuasarRAT 2, DcRat 1), all with two family-scoped voters.
 - [x] **P1 — family queue:** `--family-queue` + `families.json` + `Docs/FAMILY_TREE.md`; 181 selected/downloaded (target-capped), 23 families `unavailable_mb`; no AsyncRAT relabeling.
-- [~] **P2 — AsyncRAT batch 2:** paused by the user at 31/350; 319 entries remain `selected` in the manifest for a later resume; the 31 downloaded samples are included in the rebuild.
+- [x] **P2 — AsyncRAT batch 2:** 350/350 downloaded (319 resumed); 24 new verified (6.9%), 66 new non-.NET. Dataset 1,824 rows. Gate measured; no batch 3.
 - [x] **P3 — rebuild and gate:** 1,505 rows; 0 NULL; evidence 10,535; class DBs 130/40/704. Gate FAIL: AsyncRAT 130/32/86 (66.2%); benign PASS 70/14.7%; Stage 2 FAIL (XWorm 32/11/59.4%, Venom 5/4/40% PASS, Quasar 2/1, DcRat 1/1).
 - [x] **P4/P5 — split validity / leakage / server audit:** 299 primary rows; train 209/119/16 clusters (72.3%, degenerate), val 44/25/20, test 46/26/13 (53.8%); 0 spans; stale cleanup 17 files; leakage 14-row AsyncRAT test cluster at TLSH 86 to XWorm train (family guard, reported); 2 `reference_only` remain.
-- [x] **P6 — git/docs:** 0 generated JSONs tracked; only `Tools/MBDownloader/families.json` (source) is tracked as JSON; Phase 1.7 written in `Docs/results.md`.
+- [x] **P6 — git/docs:** 0 generated JSONs tracked; only `Tools/MBDownloader/families.json` (source) is tracked as JSON; dataset DBs are tracked; Phase 1.7/1.9 written in `Docs/results.md`.
+- [x] **Orchestrator:** cold 22 stages (~43 min stage work) → warm 14.7 s, 20 skipped, importers only. State 22/22 ok.
+
+## Phase 2.0 — pipeline cache and git tracking
+
+- [x] Schema versions, `Data/Pipeline/state.json` fingerprints, reuse in labeler/carvers/structure/voters, DIE workers, YARAify trivial-skip, single carver pass.
+- [x] Git: the four dataset DBs are tracked; generated JSONs/logs/markers and `Samples/` are ignored; tests stay tracked; only `families.json` is tracked as JSON.
 
 ## Phase 4: Stage 2 (Family Classification)
 

@@ -6,6 +6,8 @@ Writes Data/Structure/<sha256>.json. No sample is executed or loaded as code.
 
 from __future__ import annotations
 
+import argparse
+import json
 import sys
 from pathlib import Path
 
@@ -17,6 +19,8 @@ ROOT = SCRIPT_DIR.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from Tools._versions import STRUCTURE_SCHEMA_VERSION  # noqa: E402
+from Tools.Pipeline.reuse import can_reuse, output_version  # noqa: E402
 from Tools._carver_common import iter_samples, sha256_file, write_json, write_marker
 from Tools._pe import is_dotnet
 
@@ -92,23 +96,48 @@ def carve(path: Path) -> dict:
 
 
 def main() -> int:
-    out_root = ROOT / "Data"
+    parser = argparse.ArgumentParser(description="Carve structural counts")
+    parser.add_argument("--samples-root", type=Path, default=ROOT / "Samples")
+    parser.add_argument("--out", type=Path, default=ROOT / "Data")
+    parser.add_argument("--reuse", action="store_true")
+    parser.add_argument("--refresh", action="store_true")
+    args = parser.parse_args()
+    out_root = args.out.resolve()
+    samples_root = args.samples_root.resolve()
     processed = 0
-    for _class_name, path in iter_samples(ROOT / "Samples"):
+    reused = 0
+    old_versions = set()
+    for _class_name, path in iter_samples(samples_root):
         if not is_dotnet(path):
             continue
         sha256 = sha256_file(path)
+        out_path = out_root / KIND / f"{sha256}.json"
+        if args.reuse and not args.refresh and out_path.is_file():
+            try:
+                existing = json.loads(out_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                existing = None
+            ok, _reason = can_reuse(existing, sha256, STRUCTURE_SCHEMA_VERSION)
+            if ok:
+                reused += 1
+                continue
+            if existing is not None:
+                old_versions.add(str(output_version(existing)))
         payload = {
             "schema_version": 1,
             "sha256": sha256,
             "kind": KIND,
             "producer": "structure",
-            "fields": carve(path),
+            "fields": {**carve(path),
+                       "producer_version": STRUCTURE_SCHEMA_VERSION},
         }
-        write_json(out_root / KIND / f"{sha256}.json", payload)
+        write_json(out_path, payload)
         processed += 1
+    if old_versions:
+        print(f"schema changed {sorted(old_versions)[0]}->{STRUCTURE_SCHEMA_VERSION}: "
+              f"reran {processed + reused} samples (not only new)")
     write_marker(out_root / KIND)
-    print(f"structured {processed} .NET samples into {out_root / KIND}")
+    print(f"structured {processed} .NET samples (reused {reused}) into {out_root / KIND}")
     return 0
 
 
