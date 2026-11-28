@@ -193,8 +193,19 @@ def aggregate(label_fields: dict, evidence_rows: list[dict],
         return {"lbl_sts": "review", "sug_fam": suggested_family,
                 "lbl_src": "auto_aggregator", "lbl_reason": reason}
 
-    # Rule 4: verified AsyncRAT needs two independent groups.
-    if len(group_support.get("AsyncRAT", set())) >= 2:
+    # Rule 4: verified AsyncRAT needs two independent groups, and no
+    # strong/medium vote may name another family (forks must not train as
+    # AsyncRAT).
+    non_async_named = {
+        vote["verdict"] for vote in positives
+        if vote["verdict"] != "AsyncRAT"
+        and STRENGTH_RANK[vote["strength"]] >= threshold
+    }
+    if (len(group_support.get("AsyncRAT", set())) >= 2
+            and not non_async_named):
+        async_groups = group_support.get("AsyncRAT", set())
+        family_scoped = {"yara:rat-king", "yara:elastic", "yara:malpedia"}
+        reason["lineage_only"] = not bool(async_groups & family_scoped)
         return {"lbl_sts": "verified", "sug_fam": "",
                 "lbl_src": "auto_aggregator", "lbl_reason": reason}
 

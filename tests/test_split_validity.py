@@ -103,6 +103,21 @@ class ValidityTests(unittest.TestCase):
         self.assertTrue(report["structural_confound"])
         self.assertTrue(report["not_a_result"])
 
+    def test_loco_without_positives_forces_diagnostic(self):
+        test = self.split_dict([f"c{i}" for i in range(6)] * 5)
+        train = self.split_dict(["t1"] * 40)
+        results = [{"name": "lightgbm_full", "metrics": {"f1": 0.9}},
+                   {"name": "lightgbm_structural_only", "metrics": {"f1": 0.5}}]
+        with tempfile.TemporaryDirectory() as directory:
+            report = baseline.validity_report(
+                train, test, results,
+                {"triggered": True, "positives": 0, "f1": 0.0},
+                Path(directory))
+        self.assertTrue(report["loco_empty"])
+        self.assertTrue(report["not_a_result"])
+        self.assertTrue(any("LOCO has no positive rows" in reason
+                            for reason in report["reasons"]))
+
     def test_degenerate_split_forces_diagnostic(self):
         test = self.split_dict([f"c{i}" for i in range(6)] * 5)
         train = self.split_dict(["t1"] * 40)

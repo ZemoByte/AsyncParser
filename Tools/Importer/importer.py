@@ -103,10 +103,12 @@ def split_assignment(sha256: str, label: dict, is_gold: int,
     status = str(label.get("lbl_sts") or "")
     source = str(label.get("source") or "")
     origin = str(label.get("origin") or "")
-    fixture = source == "fixture" or origin == "fixture"
+    kind = str(label.get("kind") or "")
+    benign_ok = (status == "benign" and kind == "exe"
+                 and source != "clrheader2023"
+                 and origin != "fixture" and source != "fixture")
     allowed = not is_gold and (
-        status in {"verified", "verified_other"}
-        or (status == "benign" and not fixture)
+        status in {"verified", "verified_other"} or benign_ok
     )
     if not allowed:
         return None, None

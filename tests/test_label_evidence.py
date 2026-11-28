@@ -20,6 +20,7 @@ if str(REPO) not in sys.path:
 
 from Tools._label_common import (  # noqa: E402
     canonical_family,
+    lineage_only_verified,
     load_final_label,
     load_gold_labels,
 )
@@ -420,6 +421,83 @@ class GoldAndVoterTests(unittest.TestCase):
     def test_yaraify_rule_name_mapping(self):
         self.assertEqual(families_for_names(["MALWARE_Win_AsyncRAT"]), ["AsyncRAT"])
         self.assertEqual(families_for_names(["generic_rule"]), [])
+
+
+class ForkGuardTests(unittest.TestCase):
+    def test_two_lineage_asyncrat_groups_do_not_override_xworm(self):
+        result = aggregate(label(), [
+            ev(group="g1", verdict="AsyncRAT", strength="medium", scope="lineage"),
+            ev(group="g2", verdict="AsyncRAT", strength="strong", scope="lineage"),
+            ev(group="g3", verdict="XWorm", strength="strong"),
+            ev(group="g4", verdict="XWorm", strength="medium"),
+        ])
+        self.assertEqual(result["lbl_sts"], "verified_other")
+        self.assertEqual(result["sug_fam"], "XWorm")
+
+    def test_lineage_fork_signature_blocks_asyncrat(self):
+        result = aggregate(label(), [
+            ev(group="g1", verdict="AsyncRAT", strength="strong", scope="lineage"),
+            ev(group="g2", verdict="AsyncRAT", strength="medium", scope="lineage"),
+            ev(group="g3", verdict="VenomRAT", strength="medium", scope="lineage"),
+        ])
+        self.assertEqual(result["lbl_sts"], "unverified")
+        self.assertEqual(result["sug_fam"], "VenomRAT")
+
+    def test_two_lineage_asyncrat_groups_still_verify(self):
+        result = aggregate(label(), [
+            ev(group="g1", verdict="AsyncRAT", strength="strong", scope="lineage"),
+            ev(group="g2", verdict="AsyncRAT", strength="medium", scope="lineage"),
+        ])
+        self.assertEqual(result["lbl_sts"], "verified")
+
+
+class LineageOnlyTests(unittest.TestCase):
+    def test_family_scoped_group_is_not_lineage_only(self):
+        result = aggregate(label(), [
+            ev(group="yara:rat-king", verdict="AsyncRAT", strength="strong"),
+            ev(group="metadata:mb", verdict="AsyncRAT", strength="medium",
+               scope="lineage"),
+        ])
+        self.assertEqual(result["lbl_sts"], "verified")
+        self.assertFalse(result["lbl_reason"]["lineage_only"])
+
+    def test_lineage_groups_only_are_flagged(self):
+        result = aggregate(label(), [
+            ev(group="yara:own", verdict="AsyncRAT", strength="strong",
+               scope="lineage"),
+            ev(group="metadata:mb", verdict="AsyncRAT", strength="medium",
+               scope="lineage"),
+        ])
+        self.assertEqual(result["lbl_sts"], "verified")
+        self.assertTrue(result["lbl_reason"]["lineage_only"])
+
+    def test_verified_other_has_no_lineage_flag(self):
+        result = aggregate(label(), [
+            ev(group="g1", verdict="XWorm", strength="strong"),
+            ev(group="g2", verdict="XWorm", strength="strong"),
+        ])
+        self.assertEqual(result["lbl_sts"], "verified_other")
+        self.assertNotIn("lineage_only", result["lbl_reason"])
+
+
+class LineageOnlyHelperTests(unittest.TestCase):
+    def test_reads_aggregated_flags(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "Aggregated").mkdir()
+            for sha, reason in (
+                ("a", {"lineage_only": True, "groups": {"AsyncRAT": ["x"]}}),
+                ("b", {"groups": {"AsyncRAT": ["y"]}}),
+            ):
+                (root / "Aggregated" / f"{sha}.json").write_text(json.dumps({
+                    "sha256": sha, "fields": {"lbl_sts": "verified",
+                                              "lbl_reason": reason}}))
+            (root / "Aggregated" / "c.json").write_text(json.dumps({
+                "sha256": "c", "fields": {"lbl_sts": "verified_other",
+                                          "lbl_reason": {"lineage_only": True}}}))
+            rows = lineage_only_verified(root)
+            self.assertEqual([row["sha256"] for row in rows], ["a"])
 
 
 if __name__ == "__main__":

@@ -1,5 +1,163 @@
 # results.md — run reports
 
+## Phase 1.7 — YARAify, DIE, family queue, fork-label fix (2026-11-28)
+
+**DIAGNOSTIC ONLY — dataset gate failed; not a result.**
+
+This phase closed the evidence gaps and exposed a label bug: AsyncRAT-derived
+forks were being written to `AsyncRAT.db` because lineage AsyncRAT votes were
+checked before family-specific fork votes. The aggregator now resolves forks
+first. That is why `verified` drops from 152 to 130 while `verified_other`
+rises from 9 to 40 — the labels are more correct, not worse.
+
+### YARAify (shared key, parser bug, rerun)
+
+- One abuse.ch key (`YARAIFY_AUTH_KEY`, else `MB_AUTH_KEY`); key present, never
+  logged.
+- **Parser bug:** `lookup_hash` returns `data` as a dict (`metadata`, `tasks`),
+  but the old parser only accepted a list and returned `[]` for every sample.
+  The fixed parser reads `static_results[].rule_name`/`malpedia_family`,
+  `clamav_results[]`, `unpacked_yara_matches[]` and metadata signatures, for
+  both dict and list response shapes. Curated ClamAV/metadata names only
+  disambiguate conflicting static rules (sample `4902c56dfa` → AsyncRAT).
+- Rerun: **1,505/1,505** evidence files, ≤1 req/s.
+- **174 medium hits:** AsyncRAT 142, XWorm 27, QuasarRAT 4, DcRat 1.
+  At scan time 92 hit rows were already verified, 53 unverified, 22 review,
+  7 rejected; the final hit set is 116 verified + 7 verified_other.
+- No generic-rule promotions; multiple-family responses are `weak/no_match`.
+
+### Detect It Easy (obf_lvl)
+
+Official DIE 4.1.0 Fedora 45 RPM + Fedora 45 Qt5 + `current-database` db,
+run through a local wrapper. Voter updated for the 4.x JSON schema (and `-e`
+removed because it suppresses the `detects` block).
+
+- 1,505/1,505 evidence rows: **1,359 plain / 146 obfuscated / 0 unknown**.
+- Top: .NET Reactor 41, UPX 21, Smart Assembly 19, Enigma 12, ConfuserEx 10,
+  Dotfuscator 10, Themida/Winlicense 5, VMProtect 4, PyInstaller 4.
+
+### Signature backfill and gold
+
+- `downloads.signature`: **801/801 non-null**; 170 older rows backfilled from
+  the full export (0 not found; no invented values).
+- Gold review sheet: 30 rows, SHA-256 path resolution, **0 missing, 0 filled**;
+  human audit still pending. `merge_gold_review.py --dry-run` reports 0 errors.
+
+### Family queue (35 names, 12 available, 23 `unavailable_mb`)
+
+181 samples downloaded (target-capped; 23 families never queried):
+
+| family | downloaded | .NET | verified_other | unverified | rejected_non_dotnet | clusters |
+|---|---:|---:|---:|---:|---:|---:|
+| BitRAT | 50 | 33 | 0 | 33 | 17 | 0 |
+| DcRat | 50 | 12 | 0 | 12 | 38 | 0 |
+| VenomRAT | 50 | 27 | **5** | 20 | 23 | **4** |
+| GhOstRAT | 16 | 1 | 0 | 1 | 15 | 0 |
+| DarkRAT | 7 | 4 | 0 | 4 | 3 | 0 |
+| BoratRAT | 4 | 3 | 0 | 3 | 1 | 0 |
+| XieBroRAT | 2 | 0 | 0 | 0 | 2 | 0 |
+| JasonRAT | 1 | 1 | 0 | 1 | 0 | 0 |
+| PhoenixRAT | 1 | 1 | 0 | 1 | 0 | 0 |
+
+Only VenomRAT reaches `verified_other` (5 samples, 4 clusters, largest 40%).
+The other families lack the two independent family-scoped voters required,
+so they stay `unverified`; no generic rule was used to promote them.
+
+### AsyncRAT batch 2 (paused)
+
+31/350 downloaded before the user paused it; the remaining 319 are
+`selected` in the manifest and resumable. The 31 are included:
+6 verified, 18 unverified, 7 non-.NET. No further downloads.
+
+### Fork-label fix (aggregator)
+
+- Rule 5 (`verified_other`) now runs before Rule 4 (`verified` AsyncRAT), and
+  Rule 4 is blocked by a strong/medium non-AsyncRAT family name.
+- XWorm: 32 samples / 11 clusters, supported by malpedia + rat-king (and
+  YARAify on part of the set). 23 of these were previously trained as
+  AsyncRAT; that is the bug this phase fixed.
+- VenomRAT: 5 / 4 clusters (40%). QuasarRAT 2 / 1, DcRat 1 / 1.
+- 3 new tests cover lineage AsyncRAT vs fork votes; all pass.
+
+### Gate before/after
+
+| state | rows | AsyncRAT verified / clusters / largest share | Stage 1 | Stage 2 | overall |
+|---|---:|---|---|---|---|
+| after Phase 1.6 | 1,293 | 152 / 36 / 88 (57.9%) | FAIL | FAIL | FAIL |
+| after Phase 1.7 | 1,505 | **130 / 32 / 86 (66.2%)** | FAIL | FAIL | FAIL |
+
+Stage 1 benign (active only): **70 clusters, largest 14.7% — PASS**.
+Stage 2 (each family needs ≥2 clusters and ≤50% share):
+
+| family | rows | clusters | largest share | result |
+|---|---:|---:|---:|---|
+| AsyncRAT | 130 | 32 | 66.2% | FAIL |
+| XWorm | 32 | 11 | 59.4% | FAIL |
+| VenomRAT | 5 | 4 | 40.0% | PASS |
+| QuasarRAT | 2 | 1 | 100.0% | FAIL |
+| DcRat | 1 | 1 | 100.0% | FAIL |
+
+The 86-sample recent-MB cluster is 66.2% of AsyncRAT; to pass at that cluster
+size the class needs ≥172 verified. Batch 2's remaining 319 would likely
+reach it, but it was not run (by instruction).
+
+### Split (greedy whole-cluster, 299 primary rows)
+
+| split | rows | pos | neg | pos clusters | neg clusters | largest pos share | degenerate |
+|---|---:|---:|---:|---:|---:|---:|---|
+| cluster train | 209 | 119 | 90 | 16 | 32 | 72.3% | **yes** |
+| cluster val | 44 | 25 | 19 | 20 | 19 | 16.0% | no |
+| cluster test | 46 | 26 | 20 | 13 | 19 | 53.8% | **yes** |
+| temporal train | 208 | 118 | 90 | 47 | 44 | 38.1% | no |
+| temporal val | 44 | 25 | 19 | 3 | 17 | 88.0% | **yes** |
+| temporal test | 47 | 27 | 20 | 4 | 17 | 70.4% | **yes** |
+
+0 cluster spans; 10 temporal spans. Stale split cleanup removed 17 files;
+split file count `.done` count = 299. `reference_only`, `unverified`, `gold`
+and fixtures have NULL splits.
+
+### Baselines (test 46 rows, 26 positives, 13 clusters)
+
+| model | precision | recall | F1 | PR-AUC |
+|---|---:|---:|---:|---:|
+| majority | 0.565 | 1.000 | 0.722 | 0.565 |
+| logistic, structural | 0.793 | 0.885 | 0.836 | 0.730 |
+| TLSH kNN | 0.808 | 0.808 | 0.808 | 0.830 |
+| LightGBM, full | 0.889 | 0.923 | 0.906 | 0.990 |
+| LightGBM, capability only | 0.929 | 1.000 | **0.963** | 0.997 |
+| LightGBM, structural only | 0.833 | 0.769 | 0.800 | 0.934 |
+
+- `not_a_result=true`: the cluster split is degenerate (train 72.3%); the
+  test side also exceeds the 40% share rule (53.8%).
+- Structural confound: **false** (0.963 vs 0.800).
+- LOCO not triggered (16 train positive clusters); the split is primary.
+- **Leakage:** a 14-row AsyncRAT test cluster is TLSH distance **86** from a
+  19-row XWorm train cluster. The clusterer's family guard keeps them
+  separate; it is true AsyncRAT/XWorm code proximity, not a split error.
+  Reported, not re-clustered.
+- Holdout FPR: **9/565 = 1.59%**.
+
+### Integrity
+
+- DataSet **1,505 rows**, 0 NULL `cluster_id`, **925** clusters.
+- Evidence **10,535 = 7 × 1,505**; 1,505 labels and cluster JSONs.
+- Class DBs: AsyncRAT 130, OtherMalwares 40, Benign 704; 631 unassigned.
+- `reference_only` 2 (the two stub-named clients without config evidence were
+  restored; the other two remain flagged).
+- No samples deleted or executed. No commits by the agent.
+
+### Limitations
+
+- Stage 1 fails on largest share (66.2%); Stage 2 fails on AsyncRAT, XWorm and
+  singleton families.
+- Train remains degenerate (one cluster 72.3%), so all model numbers are
+  DIAGNOSTIC ONLY.
+- The 181-family queue yielded only 5 verified_other samples; most historical
+  family files are unverified or non-.NET.
+- Batch 2 is 31/350; the remaining 319 are queued in the manifest.
+- Holdout FPR rose to 1.59% (still diagnostic).
+
+
 ## Phase 1.6 — historical AsyncRAT from the full export (2026-11-28)
 
 **DIAGNOSTIC ONLY — dataset gate failed; not a result.**

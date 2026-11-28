@@ -35,7 +35,7 @@ DEFAULT_FEATURES = ROOT / "Data" / "Features"
 DEFAULT_DATA = ROOT / "Data"
 SEED = 42
 
-from Tools._label_common import load_final_label  # noqa: E402
+from Tools._label_common import lineage_only_verified, load_final_label  # noqa: E402
 from Tools._gate import evaluate_gate  # noqa: E402
 from Tools.Features.build_matrix import (  # noqa: E402
     STRUCTURAL_FEATURES,
@@ -309,6 +309,7 @@ def validity_report(train: dict, test: dict, results: list[dict],
     loco_inspect = bool(loco.get("triggered")
                         and loco.get("f1") == 1.0
                         and positive_clusters < 10)
+    loco_empty = bool(loco.get("triggered") and loco.get("positives", 0) == 0)
     reasons = []
     if test_positives < 20:
         reasons.append(f"test_positives={test_positives} < 20")
@@ -320,11 +321,14 @@ def validity_report(train: dict, test: dict, results: list[dict],
         reasons.append("structural confound: structural-only F1 is within 0.02")
     if loco_inspect:
         reasons.append("LOCO F1=1.0 with fewer than 10 positive clusters")
+    if loco_empty:
+        reasons.append("LOCO has no positive rows (single positive cluster)")
     return {
         "test_positives": test_positives,
         "test_positive_clusters": len(test_clusters),
         "structural_confound": structural_confound,
         "loco_inspect": loco_inspect,
+        "loco_empty": loco_empty,
         "split_degenerate": split_degenerate,
         "train_positive_clusters": positive_clusters,
         "not_a_result": bool(reasons),
@@ -418,7 +422,11 @@ def main() -> int:
               if not gate_ok else "Stage 1 result")
     if validity["not_a_result"]:
         header = "DIAGNOSTIC ONLY — split/validity checks failed; not a result"
+    lineage = lineage_only_verified(args.data_root)
     payload = {"header": header, "gate_pass": gate_ok,
+               "lineage_only_verified": {
+                   "count": len(lineage),
+                   "shas": [item["sha256"] for item in lineage]},
                "primary_diagnostic": "loco" if positive_clusters < 10 else "split",
                "validity": validity, "cluster_diagnostics": diagnostics,
                "loco": loco, "holdout": holdout, "models": results}

@@ -110,6 +110,30 @@ def load_final_label(sha256: str, data_dir: Path | None = None) -> dict:
     return fields
 
 
+def lineage_only_verified(data_dir: Path | None = None) -> list[dict]:
+    """Verified rows supported only by own-YARA/MB lineage groups."""
+    base = Path(data_dir) if data_dir is not None else DATA_DIR
+    results = []
+    for path in sorted((base / "Aggregated").glob("*.json")):
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        fields = payload.get("fields")
+        if not isinstance(fields, dict) or fields.get("lbl_sts") != "verified":
+            continue
+        reason = fields.get("lbl_reason")
+        if isinstance(reason, str):
+            try:
+                reason = json.loads(reason)
+            except json.JSONDecodeError:
+                continue
+        if isinstance(reason, dict) and reason.get("lineage_only"):
+            results.append({"sha256": str(payload.get("sha256") or path.stem),
+                            "groups": reason.get("groups") or {}})
+    return results
+
+
 def load_gold_labels(data_dir: Path | None = None) -> dict[str, dict]:
     """Read Data/Gold/gold.csv, if it exists.
 

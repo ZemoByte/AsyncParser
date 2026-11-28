@@ -158,6 +158,75 @@ def temporal_split(rows: list[dict]) -> dict[str, str]:
     return result
 
 
+ROW_TARGETS = {"train": 0.70, "val": 0.15, "test": 0.15}
+ROW_TOLERANCE = 0.10
+POSITIVE_SHARE_LIMIT = 0.40
+
+
+def _positive_sizes(rows: list[dict], assignment: dict[str, str],
+                    split: str) -> Counter:
+    return Counter(row["cluster_id"] for row in rows
+                   if row["label"] == "positive"
+                   and assignment.get(row["sha256"]) == split)
+
+
+def _share(sizes: Counter) -> float:
+    total = sum(sizes.values())
+    return (max(sizes.values()) / total) if total else 0.0
+
+
+def _row_fractions(rows: list[dict], assignment: dict[str, str]) -> dict:
+    counts = Counter(assignment.get(row["sha256"]) for row in rows)
+    total = len(rows) or 1
+    return {split: counts.get(split, 0) / total for split in ROW_TARGETS}
+
+
+def rebalance_splits(rows: list[dict], assignment: dict[str, str]) -> list[dict]:
+    """Move a dominant positive cluster out of val/test when it is safe.
+
+    Deterministic, split-balance only. Train is never a source; a move must
+    keep the destination and the source at <=40% largest positive share and
+    all row fractions within 10 percentage points of 70/15/15.
+    """
+    assignment = dict(assignment)
+    moves = []
+    for _ in range(4):
+        moved = False
+        for source in ("test", "val"):
+            sizes = _positive_sizes(rows, assignment, source)
+            if len(sizes) < 2 or _share(sizes) <= POSITIVE_SHARE_LIMIT:
+                continue
+            dominant = sorted(sizes.items(),
+                              key=lambda item: (-item[1], item[0]))[0][0]
+            for destination in ("val", "test", "train"):
+                if destination == source:
+                    continue
+                trial = dict(assignment)
+                for row in rows:
+                    if row["cluster_id"] == dominant:
+                        trial[row["sha256"]] = destination
+                dest_sizes = _positive_sizes(rows, trial, destination)
+                source_sizes = _positive_sizes(rows, trial, source)
+                if _share(dest_sizes) > POSITIVE_SHARE_LIMIT:
+                    continue
+                if len(source_sizes) < 2 or _share(source_sizes) > POSITIVE_SHARE_LIMIT:
+                    continue
+                fractions = _row_fractions(rows, trial)
+                if any(abs(fractions[split] - target) > ROW_TOLERANCE
+                       for split, target in ROW_TARGETS.items()):
+                    continue
+                assignment = trial
+                moves.append({"cluster_id": dominant, "from": source,
+                              "to": destination, "rows": sizes[dominant]})
+                moved = True
+                break
+            if moved:
+                break
+        if not moved:
+            break
+    return moves
+
+
 def split_stats(rows: list[dict], assignment: dict[str, str],
                 class_cluster_totals: dict[str, int]) -> dict:
     stats = {}
@@ -229,6 +298,13 @@ def main() -> int:
         raise RuntimeError("no primary rows found")
 
     cluster_assign = cluster_split(rows)
+    moves = rebalance_splits(rows, cluster_assign)
+    if moves:
+        for move in moves:
+            cluster_assign = {row["sha256"]:
+                              (move["to"] if row["cluster_id"] == move["cluster_id"]
+                               else cluster_assign[row["sha256"]])
+                              for row in rows}
     temporal_assign = temporal_split(rows)
     spans = cluster_spans(rows, cluster_assign)
     if spans:
@@ -263,10 +339,14 @@ def main() -> int:
     out_root.mkdir(parents=True, exist_ok=True)
     (out_root / ".done").write_text(
         json.dumps({"producer": "split", "count": len(rows),
-                    "seed": args.seed, "degenerate": degenerate}, sort_keys=True),
+                    "seed": args.seed, "degenerate": degenerate,
+                    "rebalanced": moves}, sort_keys=True),
         encoding="utf-8",
     )
 
+    for move in moves:
+        print(f"rebalanced cluster {move['cluster_id'][:12]}: "
+              f"{move['from']} -> {move['to']} ({move['rows']} positives)")
     print(f"split {len(rows)} primary rows; stale_removed={len(removed)}; "
           f"cluster_spans={spans} temporal_cluster_spans={temporal_spans} "
           f"missing_date={missing_date}")

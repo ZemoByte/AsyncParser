@@ -17,7 +17,8 @@ ROOT = SCRIPT_DIR.parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from Tools._label_common import load_final_label, load_gold_labels  # noqa: E402
+from Tools._label_common import (  # noqa: E402
+    lineage_only_verified, load_final_label, load_gold_labels)
 from Tools.Clustering.clusterer import family_of  # noqa: E402
 from Tools._gate import evaluate_gate  # noqa: E402
 
@@ -241,6 +242,14 @@ def main() -> int:
               f"| singletons | {sum(1 for size in cluster_sizes if size == 1)} |",
               f"| mixed-family | {mixed} |",
               f"| missing sample files | {missing_files} |"]
+
+    lineage = lineage_only_verified(data_root)
+    lines += ["", "## Lineage-only verified", "",
+              f"- rows: {len(lineage)} (own-YARA/MB lineage only; no "
+              f"family-scoped AsyncRAT voter)"]
+    for item in lineage:
+        lines.append(f"  - `{item['sha256'][:12]}...` "
+                     f"{sorted(item['groups'])}")
 
     lines += ["", "## Labels and gold", "",
               "| lbl_src | rows |", "|---|---:|"]

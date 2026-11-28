@@ -69,12 +69,28 @@ class SplitAssignmentTests(unittest.TestCase):
             "abc", {"lbl_sts": "verified"}, 0, {}, False, "train", "val")
         self.assertEqual((split, temporal), ("train", "val"))
 
-    def test_holdout_benign_without_split_file_is_null(self):
-        split, _ = split_assignment(
+    def test_holdout_benign_is_null_even_with_split_file(self):
+        split, temporal = split_assignment(
             "abc", {"lbl_sts": "benign", "source": "clrheader2023",
-                    "origin": "github", "kind": "exe"}, 0, {}, True,
-            "train", "val")
+                    "origin": "github", "kind": "exe"}, 0,
+            {"abc": {"cluster_split": "train", "temporal_split": "val"}},
+            True, "train", "val")
+        self.assertEqual((split, temporal), (None, None))
+
+    def test_benign_non_exe_is_null(self):
+        split, _ = split_assignment(
+            "abc", {"lbl_sts": "benign", "source": "dike",
+                    "origin": "github", "kind": "dll"}, 0,
+            {"abc": {"cluster_split": "train"}}, True, "test", "test")
         self.assertIsNone(split)
+
+    def test_active_benign_exe_keeps_split(self):
+        split, temporal = split_assignment(
+            "abc", {"lbl_sts": "benign", "source": "dike",
+                    "origin": "github", "kind": "exe"}, 0,
+            {"abc": {"cluster_split": "train", "temporal_split": "val"}},
+            True, "test", "test")
+        self.assertEqual((split, temporal), ("train", "val"))
 
 
 if __name__ == "__main__":
