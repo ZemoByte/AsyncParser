@@ -12,9 +12,12 @@ Dry-run first:
 from __future__ import annotations
 
 import argparse
+import csv
 import datetime
+import hashlib
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import time
@@ -42,6 +45,25 @@ LOCK_DIR = DATA / "Pipeline" / "locks"
 CARVERS = ("TypeRef", "MemberRef", "AssemblyRef", "ImplMap", "ImportTable")
 VOTERS = ("own_yara", "elastic", "malpedia", "malwarebazaar", "yaraify",
           "detect_it_easy")
+# Only the YARAify voter performs an outbound HTTP request. The other voters
+# are local (YARA rules, ledger, DIE binary). Keep this list authoritative.
+NETWORK_STAGES = ("yaraify",)
+FROZEN_DB_SHA256 = "e2db6434824f4f7952c68cda5d31ef538bfcceb122bdaac1cdf64eff1e3d1a75"
+FROZEN_SPLIT_COUNT = 341
+FROZEN_GOLD_ROWS = 30
+FREEZE_REQUIRED = (
+    DATA / "DataSet.db",
+    DATA / "Splits" / ".done",
+    DATA / "Features" / "train.npz",
+    DATA / "Features" / "val.npz",
+    DATA / "Features" / "test.npz",
+    DATA / "Features" / "metadata.json",
+    DATA / "Features" / "baseline_results.json",
+    DATA / "Features" / "fixup_results.json",
+    DATA / "Reports" / "dataset_report.md",
+    DATA / "Gold" / "review" / "gold_review_sheet.csv",
+    DATA / "Gold" / "gold.csv",
+)
 _CACHE_HELPERS = [ROOT / "Tools" / "_versions.py",
                   ROOT / "Tools" / "Pipeline" / "reuse.py"]
 CODE = {
@@ -256,9 +278,19 @@ def main() -> int:
     parser.add_argument("--refresh-all", action="store_true")
     parser.add_argument("--from", dest="start", default=None)
     parser.add_argument("--to", dest="end", default=None)
+    parser.add_argument("--apply", action="store_true",
+                        help="execute the plan; without this, plan only")
     parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--allow-network", action="store_true",
+                        help="permit network stages (YARAify)")
+    parser.add_argument("--freeze", action="store_true",
+                        help="verify the frozen package and exit")
+    parser.add_argument("--verify-only", action="store_true",
+                        help="alias for --freeze")
     parser.add_argument("--die", default=str(DIE_WRAPPER))
     args = parser.parse_args()
+    if args.freeze or args.verify_only:
+        return freeze_check()
 
     all_stages = stages()
     names = [stage["name"] for stage in all_stages]
@@ -292,13 +324,23 @@ def main() -> int:
         else:
             action, why = "run", reason
         plan.append({"stage": stage, "action": action, "reason": why})
-        if args.dry_run:
-            print(f"{stage['wave']:>2} {stage['name']:<22} {action:<4} {why}")
 
-    if args.dry_run:
+    blocked = block_network_plan(plan, args.allow_network)
+    if args.dry_run or not args.apply:
+        for item in plan:
+            print(f"{item['stage']['wave']:>2} {item['stage']['name']:<22} "
+                  f"{item['action']:<7} {item['reason']}")
         print(f"plan: run={sum(1 for p in plan if p['action']=='run')} "
-              f"skip={sum(1 for p in plan if p['action']=='skip')} jobs={jobs}")
+              f"skip={sum(1 for p in plan if p['action']=='skip')} "
+              f"blocked={sum(1 for p in plan if p['action']=='blocked')} "
+              f"jobs={jobs}")
+        if blocked:
+            print("network stages blocked: " + ", ".join(blocked))
+        print("plan-only; pass --apply to execute")
         return 0
+    if blocked:
+        print("network stages blocked: " + ", ".join(blocked))
+        print("continuing with local stages; pass --allow-network for a full run")
 
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     state.save_state(payload)
@@ -332,6 +374,67 @@ def main() -> int:
     print("\nstage timings")
     for name, seconds, status in sorted(timings, key=lambda row: row[0]):
         print(f"  {name:<22} {status:<8} {seconds:.1f}s")
+    if blocked:
+        print("network stages blocked: " + ", ".join(blocked))
+        return 2
+    return 0
+
+
+def block_network_plan(plan: list[dict], allow_network: bool) -> list[str]:
+    """Mark selected network stages blocked; return their names."""
+    blocked = []
+    if allow_network:
+        return blocked
+    for item in plan:
+        if item["stage"]["name"] in NETWORK_STAGES and item["action"] == "run":
+            item["action"] = "blocked"
+            item["reason"] = "network stage blocked; use --allow-network"
+            blocked.append(item["stage"]["name"])
+    return blocked
+
+
+def freeze_check() -> int:
+    problems = []
+    missing = [str(path) for path in FREEZE_REQUIRED if not path.exists()]
+    if missing:
+        problems.extend(f"missing: {path}" for path in missing)
+    db_path = DATA / "DataSet.db"
+    if db_path.is_file():
+        digest = hashlib.sha256(db_path.read_bytes()).hexdigest()
+        print(f"  DataSet.db sha256: {digest[:8]}…")
+        if digest != FROZEN_DB_SHA256:
+            problems.append("DataSet.db sha256 changed")
+    else:
+        print("  DataSet.db sha256: missing")
+    split_count = len(list((DATA / "Splits").glob("*.json")))
+    print(f"  split JSONs: {split_count}")
+    if split_count != FROZEN_SPLIT_COUNT:
+        problems.append(f"split count {split_count} != {FROZEN_SPLIT_COUNT}")
+    from Tools._gate import evaluate_gate
+    gate = evaluate_gate(DATA)
+    print(f"  gate: {'PASS' if gate['overall'] else 'FAIL'}")
+    if gate["overall"]:
+        problems.append("gate is PASS; expected FAIL")
+    gold_rows = []
+    gold_path = DATA / "Gold" / "gold.csv"
+    if gold_path.is_file():
+        with gold_path.open(newline="", encoding="utf-8") as handle:
+            gold_rows = list(csv.DictReader(handle))
+    filled = sum(1 for row in gold_rows
+                 if (row.get("gold_status") or "").strip())
+    print(f"  gold: {len(gold_rows)} rows / {filled} filled")
+    if len(gold_rows) != FROZEN_GOLD_ROWS or filled:
+        problems.append("gold sheet is not 30 rows / 0 filled")
+    locks = list(LOCK_DIR.glob("*")) if LOCK_DIR.is_dir() else []
+    print(f"  locks: {len(locks)}")
+    if locks:
+        problems.append(f"locks present: {len(locks)}")
+    if problems:
+        for problem in problems:
+            print(f"  FAIL: {problem}")
+        print("freeze check: FAILED")
+        return 1
+    print("freeze check: ok")
     return 0
 
 

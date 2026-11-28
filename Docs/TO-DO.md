@@ -215,7 +215,7 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
 
 - [x] WS0 snapshot: all brief numbers reproduced; tests were 202, not 192 (Phase 4 added 10); 227 after the fixup, methodfix and OOF tests.
 - [x] WS1 decisions: §40 records D1 approved, D2 not approved, P1–P3 approved, WS6b.
-- [x] WS2 labeler bias: all 498 unverified AsyncRAT rows are MB-signature-only; obfuscated and plain show the same pattern.
+- [x] WS2 labeler bias: all 498 unverified rows with an MB-signature AsyncRAT suggestion are MB-only (not confirmed); obfuscated and plain show the same pattern.
 - [x] WS4 cap: train-only 89→10 rows (79 removed); 238/148 → 159/69; DB/splits unchanged.
 - [x] WS5 feature policy: separate `Data/Features/policy/` matrix; four container fields dropped from models.
 - [x] WS6/6b fixup evaluation: grouped OOF threshold (5-fold by cluster); capability OOF F1 .903 [.800,.971] vs P/Invoke .788 [.677,.904] (overlap); PR .988 vs .695 and ROC .980 vs .645 (separate); random leak .960 (+.057); mixed LOCO at 0.5, capability recall .981 FPR .016/.023, P/Invoke FPR .636; see `Docs/results.md`.
@@ -225,7 +225,7 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
 - [ ] WS3/D2 70/30 partition: **not run**, awaiting explicit "approve D2".
 - [x] WS10 docs: results, limitations, REPRODUCE, Plan status lines; §41 OOF method.
 - [x] P4 label audit: 1,540 rows, MB-only 530, multi-source 263, conflicts 107; gold 30/0, no merge.
-- [x] P5 deletion: Data/Gold/review_sheet.md only (review/gold_review_sheet.md kept).
+- [x] P5 deletion: user-approved; see `DECISIONS` §43 (only the stale review_sheet.md, canonical sheet kept).
 
 ## Phase 5 — matched operating points, errors, thesis package (2026-11-28)
 
@@ -234,8 +234,15 @@ Legend: `[x]` done, `[ ]` not done. Sub-bullets are status notes on the step abo
 - [x] Error analysis: 0 FP / 7 FN at matched 95; F1-optimal 2 FP / 4 FN; 31 matched-95 LOCO misses (24 fold-threshold; 3/5 old positive-only); 2 Stage-2 XWorm→AsyncRAT errors, not `00fe40a8`; 0 holdout FP; 4 obfuscated positives, 2 caught.
 - [x] Label audit refined: 107 conflicts = 14 support / 20 different / 73 tie; verified_other 14/0/42; unverified 20/31.
 - [x] `Docs/FINAL_RESULTS.md`, `Docs/MODEL_CARD.md`, `Docs/CLAIMS.md`; results pointer; limitations/REPRODUCE updated.
-- [x] Tests 234; no deletions, staging or commits; gold 30/0.
+- [x] Tests 258; no deletions, staging or commits; gold 30/0.
 - [ ] D2/WS3: not run; requires explicit approval.
+
+## Phase 12 — thesis package and final audit (2026-11-28)
+
+- [x] HOST_SETUP, THESIS_OUTLINE, THESIS_FIGURES, FINAL_AUDIT written.
+- [x] Figure data as frozen CSVs (matplotlib absent; not installed); no new metrics.
+- [x] Bundle unchanged; 258 tests; gate FAIL; gold 30/0; D2 not run.
+- [x] No Git action; caches only cleaned.
 
 ## Phase 4: Stage 2 (Family Classification)
 

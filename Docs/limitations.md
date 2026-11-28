@@ -25,10 +25,10 @@ planned (batch-2 yield was 6.9%, below the 13% stop line).
 - **624 unverified** rows (mostly historical files only the MB signature
   recognizes) and **278 non-.NET** rows are outside training.
 - Batch 2 added 24 verified from 350 samples (**6.9%**).
-- All 498 unverified AsyncRAT-suggested rows are supported by the
-  MalwareBazaar signature alone; none has a family-scoped voter verdict.
-  Obfuscated (106) and plain (392) rows show the same pattern, so obfuscation
-  is not the discriminator.
+- All 498 unverified rows with an MB-signature AsyncRAT **suggestion** are
+  supported by that signature alone; none has a family-scoped voter verdict.
+  This is a suggestion, **not confirmed AsyncRAT**. Obfuscated (106) and plain
+  (392) rows show the same pattern, so obfuscation is not the discriminator.
 
 ## Split validity
 
@@ -40,9 +40,10 @@ planned (batch-2 yield was 6.9%, below the 13% stop line).
 - Because train is degenerate, **every model number is DIAGNOSTIC ONLY**.
   Capability-only F1 0.921 (and the earlier 0.963 at 1,505 rows) is a
   diagnostic, not validation.
-- Holdout FPR **13/565 = 2.3%** is the **full model** (capability + all
-  counts); capability-only is 35/565 = 6.2% — see Phase 2.1d. LOCO not
-  triggered (23 train positive clusters).
+- **Holdout FPR, ordered:** capability-only 0.5 = **35/565 (6.2%)**; full model
+  0.5 = **13/565 (2.3%)**; full model OOF = **108/565 (19.1% [11.9, 27.9])**;
+  capability OOF = **19/565 (3.4%)**. The 2.3% is a 0.5 historical number,
+  **not the main FPR**. LOCO not triggered (23 train positive clusters).
 - **Benign time order is a collection-batch artifact:** all 704 benign rows
   fall back to `collected_at` (10 distinct timestamps), not real first-seen
   dates. Positives use `YYYY-MM-DD HH:MM:SS`; benign uses ISO
@@ -91,10 +92,9 @@ labeling errors.
   methodology comparison only, not superiority.
 - Stage 2 rules/kNN: 24/58 abstain; 33/34 decided correct (1 XWorm→VenomRAT).
   QuasarRAT/DcRat always abstain with these counts.
-- Holdout FPR: 2.3% for the **full** train-split baseline model (capability
-  + all counts), 6.2% for capability-only, and 10.8% for the all-primary
-  Phase 4 model. Training composition matters; neither is a production
-  estimate.
+- Holdout FPR follows the ordered block above; 2.3% is a 0.5 historical
+  number for the full model, not the main FPR. Training composition matters;
+  neither number is a production estimate.
 - The data ceiling and no-batch-3 decision remain in force.
 
 ## Fixup policies (diagnostic, 2026-11-28)
@@ -132,12 +132,11 @@ labeling errors.
   vs **.645 [.441, .847]** do separate. Ranking favors capability; neither
   comparison is a result.
 - The random split leak check is **.960 (+.057)** F1; not a result.
-- **Holdout:** at 0.5, capability-only is **35/565 = 6.2%** and the full model
-  (capability + all counts) is **13/565 = 2.3%**. At the OOF threshold,
-  capability is **19/565 = 3.4% [2.2, 5.2]** and the full model is
-  **108/565 = 19.1% [11.9, 27.9]**. The historical 2.3% is the full model at
-  0.5, not capability-only; no 0/565 row is headlined. The capped model's
-  6/565 at OOF is not evidence of a perfect detector.
+- **Holdout:** capability-only 0.5 = **35/565 = 6.2%**; full model 0.5 =
+  **13/565 = 2.3%**; full model OOF = **108/565 = 19.1% [11.9, 27.9]**;
+  capability OOF = **19/565 = 3.4% [2.2, 5.2]**. The historical 2.3% is the
+  full model at 0.5, not the main FPR; no 0/565 row is headlined. The capped
+  model's 6/565 at OOF is not evidence of a perfect detector.
 - **Mixed LOCO at 0.5:** 52 verified folds and 82 positive folds; 70 benign
   clusters, each held out once; 0 mixed clusters; no held-out cluster in
   fold-train. Capability recall .981/.981 with FPR .016/.023; P/Invoke recall
@@ -178,3 +177,11 @@ labeling errors.
   capability caught 2/4 at matched 95. No metric is computed below 20
   positives.
 - Gold remains **30 rows / 0 filled / no merge**; D2/WS3 is not run.
+
+## Independent static review (not gold)
+
+The independent static review is partial: **15/30 rows**, with **8
+status+family agreements, 1 family match/status upgrade, and 6 real
+disagreements**. Five unverified rows look benign (3 AsyncRAT-suggested, 2
+XWorm-suggested); `0384e80d` sits in a 40-row unverified cluster. It is not
+ground truth, no labels were changed, and it was not merged.

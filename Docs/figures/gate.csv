@@ -1,0 +1,8 @@
+component,rows,clusters,largest,share_pct,ok
+stage1_asyncrat,154,52,89,57.792,false
+stage1_benign,129,70,19,14.729,true
+stage2_DcRat,1,1,1,100.0,false
+stage2_QuasarRAT,3,2,2,66.667,false
+stage2_VenomRAT,5,4,2,40.0,true
+stage2_XWorm,49,23,24,48.98,true
+overall,,,,,false

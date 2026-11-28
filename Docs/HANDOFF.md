@@ -13,7 +13,7 @@ clusters, splits or gate thresholds changed in this phase.
   error analysis, automated label-quality audit.
 - Final docs: `FINAL_RESULTS.md`, `CLAIMS.md`, `MODEL_CARD.md`,
   `D2_DECISION.md`, `limitations.md`, `REPRODUCE.md`.
-- Tests: 234 pass; `git diff --check` clean.
+- Tests: 258 pass; `git diff --check` clean.
 
 ## Not done
 
@@ -41,15 +41,26 @@ clusters, splits or gate thresholds changed in this phase.
 
 ```bash
 python3 tests/run_tests.py
+python3 Tools/Pipeline/run.py --freeze   # frozen-package check; runs no stages
 python3 Tools/Models/fixup_eval.py
 python3 Tools/Audit/label_quality.py
 python3 Tools/Audit/error_analysis.py
+python3 Tools/Models/export_model.py
+python3 Tools/Models/predict.py --file /path/to/file.exe
 ```
+
+`run.py` is plan-only unless `--apply` is passed; `--allow-network` is needed
+only for **YARAify**, the only online voter. No stage was run in this phase.
+The CLI is a static prototype, not a detector; see `Docs/CLI.md`. Parity on 30 known samples: 23 scored matches, 7 abstentions, 0 mismatches.
 
 Seed 42; OOF `GroupKFold` by `cluster_id`; one evaluator run. Full pipeline
 order is in `Docs/REPRODUCE.md`. The gate is checked by
 `Tools/_gate.py:evaluate_gate` and remains **FAIL** (AsyncRAT 52 clusters,
 largest 89 = 57.8%).
+
+## Portable bundle
+
+See `Docs/BUNDLE.md` and `Docs/HOST_SETUP.md` for the final host bundle `/tmp/opencode/asyncparser_bundle_final.tar.gz`, exclusions, CPU-only setup and smoke commands. The thesis package is `Docs/THESIS_OUTLINE.md` / `Docs/THESIS_FIGURES.md`; the final audit is `Docs/FINAL_AUDIT.md`.
 
 ## Thesis claim
 
@@ -60,40 +71,8 @@ largest 89 = 57.8%).
 
 ## Git handoff
 
-This phase staged and committed nothing. At freeze, `git status --short`
-showed:
-
-```text
- M Docs/DECISIONS.md
- M Docs/DECISIONS_PART2.md
-MM Docs/GOLD_AUDIT.md
- M Docs/Plan.md
-MM Docs/REPRODUCE.md
-MM Docs/TO-DO.md
-MM Docs/limitations.md
-MM Docs/results.md
- M Tools/Features/build_matrix.py
- M Tools/Models/baseline.py
-M  Tools/Models/evaluate.py
- M Tools/_versions.py
-A  tests/test_phase4.py
-?? Docs/CLAIMS.md
-?? Docs/D2_DECISION.md
-?? Docs/FINAL_RESULTS.md
-?? Docs/HANDOFF.md
-?? Docs/MODEL_CARD.md
-?? Tools/Audit/error_analysis.py
-?? Tools/Audit/label_quality.py
-?? Tools/Models/fixup_eval.py
-?? tests/test_fixup.py
-?? tests/test_label_quality.py
-```
-
-The staged entries predate this phase. Suggested neutral commit message:
-
-```
-Freeze diagnostic evaluation and thesis package (Phase 6)
-```
-
+No Git actions were performed by the implementation; the user owns the repo.
+At freeze, the working tree contained pre-existing index entries and new
+untracked docs/source files; nothing was staged or committed in this phase.
 Do not commit binaries, `Samples/`, or generated JSON/logs. No deletions were
 made in this phase.

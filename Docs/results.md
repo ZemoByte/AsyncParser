@@ -162,8 +162,8 @@ run produced this section. D2/WS3 is **not run**.
 - `script_sha256`: `55b4fdd009653e4cbcccf6cdf9929a981aa8c29f2dd6bf9a21b0dc4e0b099c0b`
 - `run_id`: `c50d3748a16145df982c8728719ce062`; `oof_folds`: 5; `threshold_source`:
   `train_oof_groupkfold`
-- All sections (`test`, `holdout`, `stage2`, both LOCO scopes) carry the same
-  `run_id`.
+- Historical Phase 2.1d: all sections in that block carry the same `run_id`
+  (`c50d3748…`); it is not the final Phase 5 run.
 
 ### OOF threshold
 
@@ -576,7 +576,8 @@ follows from any number above.
 `lbl_sts='unverified'` and `sug_fam='AsyncRAT'` (106 obfuscated, 392 plain).
 
 Each row's `label_evidence` was classified by whether any voter other than the
-MalwareBazaar (MB) signature produced a family verdict:
+MalwareBazaar (MB) signature produced a family verdict. These are
+MB-signature **suggestions**, not confirmed AsyncRAT:
 
 | class | plain | obfuscated | total |
 |---|---:|---:|---:|
@@ -800,7 +801,7 @@ reason for the failure and were not downgraded.
 XWorm now has enough independent clusters; the remaining failures are
 AsyncRAT's 89-row cluster and singleton QuasarRAT/DcRat.
 
-### Split (341 primary: 180 positives, 161 negatives)
+### Split (341 primary: 212 positives, 129 negatives)
 
 | split | rows | pos | neg | pos clusters | neg clusters | largest pos share | degenerate |
 |---|---:|---:|---:|---:|---:|---:|---|
@@ -808,7 +809,9 @@ AsyncRAT's 89-row cluster and singleton QuasarRAT/DcRat.
 | val | 51 | 32 | 19 | 30 | 19 | 6.2% | no |
 | test | 52 | 32 | 20 | 29 | 19 | 12.5% | no |
 
-- 0 cluster spans; 0 stale split files; split files = `.done` = 341.
+- Correction: earlier text said 180 positives / 161 negatives; the DB-backed
+  count is **212 / 129**. 0 cluster spans; 0 stale split files; split files =
+  `.done` = 341.
 - The rebalance post-pass made **no move**: after batch 2 the test split is
   already healthy (12.5%), and the 14-row cluster from Phase 1.7 no longer
   dominates. Train remains degenerate at 60.1%.

@@ -6,6 +6,11 @@ Run: `2026-11-28T15:42:40+00:00`, `run_id=c7a21a6c37f14f5aabcc821dd26729cd`,
 `script_sha256=6598bfce845eca72666753b7cd8ae2f21172947e83c4a43e43c9bc9c7e2cc5ef`,
 seed 42, OOF folds 5.
 
+## Thesis reading order
+
+FINAL_RESULTS → CLAIMS → `results.md` appendix. HANDOFF, D2_DECISION/D2_PREVIEW and
+GOLD_AUDIT are appendices; no files were deleted or archived.
+
 ## 1. Dataset and gate
 
 - **1,824 rows / 1,228 clusters / 0 NULL `cluster_id`; evidence 12,768.**
@@ -40,8 +45,8 @@ shown in §4/§5, not as the main performance table.
 | capability + policy counts | .918 | .955 | .992 [.967, 1.000] | .987 [.961, 1.000] |
 | capability + all counts | .900 | .941 | .992 [.965, 1.000] | .988 [.958, 1.000] |
 | capped capability | .935 | .897 | .989 [.961, 1.000] | .981 [.947, 1.000] |
-| structural only (policy) | .857 | .844 | .933 [.870, .987] | .880 [.786, .973] |
-| structural only (all, diagnostic) | .831 | .857 | .929 [.850, .984] | .881 [.765, .971] |
+| structural only (policy; main structural model) | .857 | .844 | .933 [.870, .987] | .880 [.786, .973] |
+| structural only (all; diagnostic) | .831 | .857 | .929 [.850, .984] | .881 [.765, .971] |
 | P/Invoke count only | .795 | .788 | .695 [.553, .902] | .645 [.441, .847] |
 | file size only (diagnostic) | .000 | .400 | .827 [.680, .934] | .688 [.547, .851] |
 | random split (leaky diagnostic) | .960 | .960 | .999 [.986, 1.000] | .998 [.989, 1.000] |
@@ -130,13 +135,16 @@ Audited 1,540 rows; 530 rows (all unverified) are MB-signature-only, and
 Top unverified pairs: AsyncRAT|XWorm 28, AsyncRAT|DcRat 19. The project
 `lineage_only` flag is 11 verified; the broader DB-only no-family-scoped count
 is 49. **No labels were changed or inferred. Gold is 30 rows / 0 filled / no
-merge. The independent static review is partial (5/30); it is not used as
-ground truth and is not merged.**
+merge.** An independent static review is partial: **15/30 rows**, with
+**8 status+family agreements, 1 family match/status upgrade, and 6 real
+disagreements**. Five unverified rows look benign (3 AsyncRAT-suggested, 2
+XWorm-suggested); `0384e80d` sits in a 40-row unverified cluster. It is not
+gold, no labels changed, and it is not merged.
 
 ## 9. Obfuscation, temporal, gold
 
-- Obfuscation: verified 10/154 (6.5%); unverified AsyncRAT-suggested 106/498
-  (21.3%). Test has 6 obfuscated rows, **4 positives**; capability caught 2/4
+- Obfuscation: verified 10/154 (6.5%); unverified rows with an MB-signature
+  AsyncRAT suggestion (not confirmed) 106/498 (21.3%). Test has 6 obfuscated rows, **4 positives**; capability caught 2/4
   at matched 95. No metric is computed below 20 positives.
 - Temporal: benign dates are collection batches (10 `collected_at` values);
   every temporal number is diagnostic.
@@ -176,7 +184,16 @@ ground truth and is not merged.**
   small Stage 2, label audit is not human gold, no real-world claim.
 - **Ethics/safety:** static parsing only; no execution; samples untracked.
 
-## 12. Reproduction
+## 12. Provenance
+
+| artifact | run id | script sha256 | status |
+|---|---|---|---|
+| Phase 2.1d historical diagnostic | `c50d3748a16145df982c8728719ce062` | `55b4fdd009653e4cbcccf6cdf9929a981aa8c29f2dd6bf9a21b0dc4e0b099c0b` | historical; not final |
+| Phase 5 final diagnostic | `c7a21a6c37f14f5aabcc821dd26729cd` | `6598bfce845eca72666753b7cd8ae2f21172947e83c4a43e43c9bc9c7e2cc5ef` | final tables |
+| `Data/Features/phase4_results.json` | none | none | legacy; no run metadata; not reproducible from current scripts; not used for final tables |
+| `Data/Features/baseline_results.json` | none | none | legacy diagnostic output of `baseline.py`; no run hash; not used as a final result |
+
+## 13. Reproduction
 
 ```bash
 python3 Tools/Models/fixup_eval.py
@@ -195,3 +212,16 @@ D2 would move 70% of the 565 `clrheader2023` benign rows into ordinary training
 change positive split assignments and shrinks the holdout, so it requires
 **explicit approval**. It was not executed here; the full 565-row holdout is
 unchanged.
+
+## 14. Prototype CLI (diagnostic)
+
+`Tools/Models/predict.py` is a static single-EXE prototype. It hashes and
+parses the file (dnfile/pefile), reuses the five carver functions, abstains on
+non-.NET/parse failure or fewer than 357 combined TypeRef+MemberRef entries,
+and scores Stage 1 with the frozen capability model (threshold .559). Stage 2
+is printed only for a Stage-1 RAT and is AsyncRAT vs XWorm only, labelled
+`diagnostic, n=29`; other families are not modeled. Every output begins
+`NOT VALIDATED — dataset gate failed; research prototype; not a detector.`
+Exit codes: 0 scored, 2 abstained, 1 error. The models live under
+`Data/Models/` (gitignored); the CLI is not a detector.
+CLI parity checked on 30 known samples; prototype only; no detector claim; other families abstain.

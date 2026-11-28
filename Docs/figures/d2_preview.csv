@@ -1,0 +1,2 @@
+hassan_rows,hassan_clusters,train_rows,train_clusters,holdout_rows,holdout_clusters,holdout_fraction,overlap,forced_train_clusters,forced_train_hassan_clusters,fixture_rows,missing_artifacts
+565,293,396,164,169,129,0.2991150442477876,0,945,10,10,0

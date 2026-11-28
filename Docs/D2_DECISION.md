@@ -34,8 +34,9 @@
 
 ## Exact commands if approved
 
-The partition helper does not exist yet; it must be added first as the only
-source of the 70/30 decision. After that, the approved rebuild order is:
+**Tools/_partition.py exists and is tested; it is not wired into the
+pipeline.** Preview: 565/293 -> 396/164 train, 169/129 holdout; D2 not
+approved. After approval, the approved rebuild order is:
 
 ```bash
 python3 Tools/Splits/split.py

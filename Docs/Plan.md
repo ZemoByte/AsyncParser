@@ -199,4 +199,4 @@ diagnostic, D2 70/30 partition is **not run** (awaiting approval), P3 temporal
 results are diagnostic because benign dates are collection-batch dates.
 Thresholds are grouped 5-fold OOF; Phase 5 adds matched 95%/90% target recall,
 LOCO at the matched point, error analysis and the FINAL_RESULTS/MODEL_CARD/
-CLAIMS package. The label audit is automated, not human gold. D2 is not run. Tests: 234. No commits, no network, no new data.
+CLAIMS package. The label audit is automated, not human gold. D2 is not run. Phase 12 thesis package and final audit written; tests: 258. No commits, no network, no new data.

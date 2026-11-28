@@ -346,6 +346,13 @@ def main() -> int:
     parser.add_argument("--data-root", type=Path, default=DEFAULT_DATA)
     parser.add_argument("--seed", type=int, default=SEED)
     args = parser.parse_args()
+    metadata_path = args.features / "metadata.json"
+    if metadata_path.is_file():
+        metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        if metadata.get("feature_policy", "all") == "all":
+            print("WARNING: structural models include banned container fields; "
+                  "use Data/Features/policy; this run is diagnostic",
+                  file=sys.stderr)
 
     train = load_split(args.features / "train.npz")
     val = load_split(args.features / "val.npz")

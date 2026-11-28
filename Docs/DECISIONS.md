@@ -870,3 +870,22 @@ not used.
 `Tools/Models/fixup_eval.py` writes matched-recall tables with one run id;
 tests cover train-only threshold selection and raw-score thresholds. The
 error-analysis JSON reports the actual held-out recall and errors.
+
+## 43. Gold-sheet cleanup and read-only Git provenance (2026-11-28)
+
+- `Data/Gold/review_sheet.md` was a stale, gitignored, generated duplicate of
+  the canonical `Data/Gold/review/gold_review_sheet.*`. The user approved the
+  cleanup; only that file was deleted. The canonical sheet was retained. No
+  sample, DB, label, split, cluster, gate or gold field was changed.
+- Git status/diff were read-only reports requested by the user. The
+  implementation performed no staging or commit; the user owns the repository.
+
+## 44. Write and network guard for run.py (2026-11-28)
+
+- Plain `Tools/Pipeline/run.py` is **plan-only**; no stage runs without
+  `--apply`. `--dry-run` is also plan-only.
+- `--allow-network` is required only for **YARAify**, the only voter with an
+  outbound HTTP call. The other voters are local.
+- `--freeze`/`--verify-only` checks DataSet.db sha256, 341 split JSONs, gate
+  FAIL, gold 30/0 and empty locks; it runs zero stages and exits 0/1.
+- No data, label, cluster, gate, split or gold field was changed.

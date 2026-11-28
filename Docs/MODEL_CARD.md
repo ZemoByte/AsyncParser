@@ -57,6 +57,13 @@ positives); label audit is not ground truth; no human gold; no real-world
 claim. The matched-95 calibration failed to transfer: capability flagged
 0/565 at 78.1% actual recall; **this is not a result**. D2/WS3 is not run.
 
+## Prototype CLI
+
+A static single-EXE prototype exists (`Tools/Models/predict.py`). Its outputs
+are Stage 1 diagnostic and, only for a Stage-1 RAT, an AsyncRAT-vs-XWorm
+diagnostic (`n=29`); all other cases abstain. It is not a detector and makes
+no other-malware claim. See `Docs/CLI.md`.
+
 ## Safety
 
 Static parsing only. No sample execution, loading or building. Samples are
